@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="id">
+  <head>
+    <meta charset="utf-8" />
+    <title>Photobooth Digital PCKV</title>
+    <script>
+      // Otomatis redirect rute statis GitHub Pages ke HashRouter
+      const pathname = window.location.pathname;
+      const base = '/Photobooth-PCKV/';
+      let route = pathname.startsWith(base) ? pathname.slice(base.length) : pathname.replace(/^\//, '');
+      const search = window.location.search || '';
+      const hash = window.location.hash || '';
+      window.location.replace(base + '#/' + route + search + hash);
+    </script>
+  </head>
+  <body>
+    <p style="font-family:sans-serif; text-align:center; padding:50px; color:#555;">Memuat Photobooth...</p>
+  </body>
+</html>
