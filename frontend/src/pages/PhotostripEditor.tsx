@@ -81,11 +81,11 @@ export default function PhotostripEditor() {
   const [offsetX, setOffsetX] = useState(state.photoOffsetX || 0);
   const [offsetY, setOffsetY] = useState(state.photoOffsetY || 0);
 
-  // Border thickness & layout controls ("kurang pas ga si" -> golden ratio Life4Cuts standard)
-  const [borderPad, setBorderPad] = useState<number>(26); // Default 26px (Pas - Authentic Korean Photobooth)
-  const [photoGap, setPhotoGap] = useState<number>(14); // Default 14px
-  const [photoRadius, setPhotoRadius] = useState<number>(8); // Default 8px
-  const [showPhotoBorder, setShowPhotoBorder] = useState<boolean>(true); // Crisp card stroke
+  // Border thickness & layout controls ("border putihnya ketebelan" -> slim modern Korean photobooth)
+  const [borderPad, setBorderPad] = useState<number>(16); // Default 16px (Slim & Sleek Korean Photobooth)
+  const [photoGap, setPhotoGap] = useState<number>(10); // Default 10px
+  const [photoRadius, setPhotoRadius] = useState<number>(6); // Default 6px
+  const [showPhotoBorder, setShowPhotoBorder] = useState<boolean>(false); // Default OFF so no extra thick white outlines
 
   const rawPhotos = state.filteredPhotos.length > 0 ? state.filteredPhotos : state.capturedPhotos;
   const isDemo = rawPhotos.length === 0;
@@ -137,8 +137,8 @@ export default function PhotostripEditor() {
     let pad = borderPad;
 
     const isMultiPhoto = layout === "strip4" || layout === "strip3";
-    const topH = showHeader ? (isMultiPhoto ? 100 : 120) : (isMultiPhoto ? 30 : 40);
-    const bottomH = caption || showDate ? (isMultiPhoto ? 140 : 160) : (isMultiPhoto ? 32 : 40);
+    const topH = showHeader ? (isMultiPhoto ? 88 : 110) : (isMultiPhoto ? 20 : 28);
+    const bottomH = caption || showDate ? (isMultiPhoto ? 120 : 140) : (isMultiPhoto ? 20 : 28);
 
     if (layout === "strip3") {
       canvasWidth = 600;
@@ -382,9 +382,9 @@ export default function PhotostripEditor() {
         ctx.roundRect(x, y, photoW, photoH, photoRadius);
         ctx.strokeStyle =
           selectedTheme.type === "image" || selectedTheme.color === "#18181B"
-            ? "rgba(255, 255, 255, 0.55)"
+            ? "rgba(255, 255, 255, 0.4)"
             : "rgba(0, 0, 0, 0.12)";
-        ctx.lineWidth = 1.5;
+        ctx.lineWidth = 1;
         ctx.stroke();
         ctx.restore();
       }
@@ -669,10 +669,10 @@ export default function PhotostripEditor() {
                 {/* Quick Presets */}
                 <div className="grid grid-cols-4 gap-1">
                   {[
-                    { label: "Tipis", pad: 18, gap: 10, rad: 6 },
-                    { label: "Korea", pad: 26, gap: 14, rad: 8 },
-                    { label: "Sedang", pad: 32, gap: 18, rad: 10 },
-                    { label: "Tebal", pad: 40, gap: 22, rad: 12 },
+                    { label: "Tipis", pad: 10, gap: 6, rad: 4 },
+                    { label: "Korea", pad: 16, gap: 10, rad: 6 },
+                    { label: "Sedang", pad: 22, gap: 14, rad: 8 },
+                    { label: "Tebal", pad: 30, gap: 18, rad: 10 },
                   ].map((preset) => (
                     <button
                       key={preset.label}
@@ -973,17 +973,17 @@ export default function PhotostripEditor() {
           </div>
         )}
 
-        <div className="relative bg-white rounded-3xl shadow-xl p-4 sm:p-5 overflow-auto max-h-[75vh] border border-gray-200 flex items-center justify-center">
+        <div className="relative flex items-center justify-center py-2 overflow-auto max-h-[78vh]">
           {loading && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center bg-white/80 rounded-3xl z-10 gap-2">
-              <Loader2 className="animate-spin text-rose-600" size={36} />
-              <span className="text-xs font-bold text-gray-600">Memperbarui desain...</span>
+            <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/40 backdrop-blur-xs rounded-2xl z-10 gap-2">
+              <Loader2 className="animate-spin text-white" size={36} />
+              <span className="text-xs font-bold text-white">Memperbarui desain...</span>
             </div>
           )}
           <canvas
             ref={canvasRef}
-            className="max-w-full rounded-xl shadow-md"
-            style={{ maxHeight: "68vh", width: "auto" }}
+            className="max-w-full rounded-2xl shadow-2xl transition-all"
+            style={{ maxHeight: "72vh", width: "auto" }}
           />
         </div>
 
