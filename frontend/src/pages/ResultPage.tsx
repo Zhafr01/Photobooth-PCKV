@@ -34,10 +34,12 @@ export default function ResultPage() {
       const GIF_W = 480, GIF_H = 360;
       const normalizeImage = (b64: string): Promise<string> =>
         new Promise((resolve) => {
-          const img = document.createElement("img");
+          const img = new window.Image();
+          const src = b64.startsWith("data:") ? b64 : `data:image/png;base64,${b64}`;
           img.onload = () => {
             const c = document.createElement("canvas");
-            c.width = GIF_W; c.height = GIF_H;
+            c.width = GIF_W;
+            c.height = GIF_H;
             const ctx = c.getContext("2d")!;
             const scale = Math.max(GIF_W / img.width, GIF_H / img.height);
             const sw = GIF_W / scale, sh = GIF_H / scale;
@@ -45,25 +47,41 @@ export default function ResultPage() {
             ctx.drawImage(img, sx, sy, sw, sh, 0, 0, GIF_W, GIF_H);
             resolve(c.toDataURL("image/png"));
           };
-          img.onerror = () => resolve(`data:image/png;base64,${b64}`);
-          img.src = `data:image/png;base64,${b64}`;
+          img.onerror = () => resolve(src);
+          img.src = src;
         });
 
-      Promise.all(photos.map(normalizeImage)).then((normalized) => {
-        const boomerangSequence = [...normalized, ...[...normalized].reverse().slice(1, -1)];
-        gifshot.createGIF(
-          { images: boomerangSequence, interval: 0.3, gifWidth: GIF_W, gifHeight: GIF_H },
-          (obj: { error: boolean; image: string; errorMsg?: string }) => {
-            setGifGenerating(false);
-            if (!obj.error && obj.image) {
-              setGifUrl(obj.image);
-              dispatch({ type: "SET_SESSION_GIF", payload: obj.image });
-            } else {
-              console.warn("GIF generation failed:", obj.errorMsg);
+      Promise.all(photos.map(normalizeImage))
+        .then((normalized) => {
+          const seq =
+            normalized.length === 1
+              ? [normalized[0], normalized[0]]
+              : [...normalized, ...[...normalized].reverse().slice(1, -1)];
+
+          gifshot.createGIF(
+            {
+              images: seq,
+              interval: 0.25,
+              gifWidth: GIF_W,
+              gifHeight: GIF_H,
+              numWorkers: 2,
+              sampleInterval: 10,
+            } as any,
+            (obj: { error: boolean; image: string; errorMsg?: string }) => {
+              setGifGenerating(false);
+              if (!obj.error && obj.image) {
+                setGifUrl(obj.image);
+                dispatch({ type: "SET_SESSION_GIF", payload: obj.image });
+              } else {
+                console.warn("GIF generation failed:", obj.errorMsg);
+              }
             }
-          }
-        );
-      });
+          );
+        })
+        .catch((e) => {
+          console.warn("GIF normalization failed:", e);
+          setGifGenerating(false);
+        });
     }
   }, [photos, gifUrl, dispatch]);
 
@@ -86,17 +104,21 @@ export default function ResultPage() {
         });
 
         if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
-        const data = await res.json() as { key: string };
-        const downloadUrl = `${API_URL}/api/download/${data.key}`;
+        const data = (await res.json()) as { key: string };
+        const cleanPath = window.location.pathname.endsWith("/")
+          ? window.location.pathname
+          : `${window.location.pathname}/`;
+        const downloadPageUrl = `${window.location.origin}${cleanPath}#/download?key=${data.key}`;
 
-        QRCode.toDataURL(downloadUrl, { margin: 1, width: 240 })
+        QRCode.toDataURL(downloadPageUrl, { margin: 1, width: 240 })
           .then((url) => setQrCodeDataUrl(url))
           .catch(console.error);
       } catch (err) {
-        console.warn("Upload to backend failed, QR tidak tersedia:", err);
-        // Fallback: QR arahkan ke halaman result (tidak bisa download tapi setidaknya ada QR)
-        const baseUrl = `${window.location.origin}${window.location.pathname}`;
-        QRCode.toDataURL(`${baseUrl}#/result`, { margin: 1, width: 240 })
+        console.warn("Upload to backend failed, QR fallback ke halaman hasil:", err);
+        const cleanPath = window.location.pathname.endsWith("/")
+          ? window.location.pathname
+          : `${window.location.pathname}/`;
+        QRCode.toDataURL(`${window.location.origin}${cleanPath}#/result`, { margin: 1, width: 240 })
           .then((url) => setQrCodeDataUrl(url))
           .catch(console.error);
       }

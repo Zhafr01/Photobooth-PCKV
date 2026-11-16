@@ -8,7 +8,7 @@ import {
   RefreshCw, Scan, Usb
 } from "lucide-react";
 import QRCode from "qrcode";
-import Peer from "peerjs";
+import Peer, { type DataConnection } from "peerjs";
 import { usePhotobooth } from "../store/photoboothStore";
 import { faceTracker, type FaceBox } from "../services/faceTracker";
 
@@ -294,6 +294,7 @@ export default function CameraPage() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordedChunksRef = useRef<Blob[]>([]);
   const peerRef = useRef<Peer | null>(null);
+  const phoneConnRef = useRef<DataConnection | null>(null);
   const rafRef = useRef<number | null>(null);
   const faceBoxesRef = useRef<FaceBox[]>([]);
   // Mutable refs so the RAF loop always reads latest values without stale closure
@@ -404,10 +405,13 @@ export default function CameraPage() {
     const canvas = liveRenderCanvasRef.current;
     if (!canvas) return;
 
-    // Half display resolution → 4× fewer pixels, CSS scales it up
-    const dw = Math.max(1, Math.round(video.clientWidth / 2));
-    const dh = Math.max(1, Math.round(video.clientHeight / 2));
-    if (dw === 0 || dh === 0) return;
+    const vw = video.videoWidth;
+    const vh = video.videoHeight;
+    if (!vw || !vh) return;
+
+    // Half raw resolution → 4× fewer pixels for 60fps performance, exact same aspect ratio as video
+    const dw = Math.round(vw / 2);
+    const dh = Math.round(vh / 2);
 
     if (canvas.width !== dw || canvas.height !== dh) {
       canvas.width = dw;
@@ -417,71 +421,68 @@ export default function CameraPage() {
     const ctx = canvas.getContext("2d", { willReadFrequently: true });
     if (!ctx) return;
 
-    const vw = video.videoWidth || dw * 2;
-    const vh = video.videoHeight || dh * 2;
-
-    // ── Object-fit COVER crop: match what CSS does to the video element ──
-    // Scale so video FILLS canvas (no letterbox), then center-crop excess
-    const coverScale = Math.max(dw / vw, dh / vh);
-    const srcW = dw / coverScale;   // visible width in video-pixels
-    const srcH = dh / coverScale;   // visible height in video-pixels
-    const srcX = (vw - srcW) / 2;  // center-crop X offset in video-pixels
-    const srcY = (vh - srcH) / 2;  // center-crop Y offset in video-pixels
-
-    // Draw with cover crop (NO internal mirror — CSS viewportStyle handles scaleX(-1))
-    ctx.drawImage(video, srcX, srcY, srcW, srcH, 0, 0, dw, dh);
+    // Draw full video frame 1:1 into canvas (CSS objectFit handles cover/contain positioning)
+    ctx.drawImage(video, 0, 0, dw, dh);
 
     const currentFilter = liveFilterRef.current;
     if (currentFilter === "normal") return;
 
-    // Map faceBoxes: video-pixel coords → crop-adjusted canvas coords
-    const toCanvasX = dw / srcW;
-    const toCanvasY = dh / srcH;
-    const scaledBoxes: FaceBox[] = faceBoxesRef.current
-      .map(fb => ({
-        x: (fb.x - srcX) * toCanvasX,
-        y: (fb.y - srcY) * toCanvasY,
-        w: fb.w * toCanvasX,
-        h: fb.h * toCanvasY,
-      }))
-      .filter(fb => fb.x + fb.w > 0 && fb.y + fb.h > 0 && fb.x < dw && fb.y < dh);
+    // Map faceBoxes directly: video pixel coords → canvas coords
+    const scaleX = dw / vw;
+    const scaleY = dh / vh;
+    const scaledBoxes: FaceBox[] = faceBoxesRef.current.map((fb) => ({
+      x: fb.x * scaleX,
+      y: fb.y * scaleY,
+      w: fb.w * scaleX,
+      h: fb.h * scaleY,
+    }));
 
-    // ── Blur filters: use ctx.filter (GPU, no lag, no darkening) ──
+    // Blur filters: GPU ctx.filter
     const blurPx = Math.round(blurStrengthRef.current * 1.5);
 
     if (currentFilter === "face_blur_bg") {
-      // 1. Redraw blurred full frame
       ctx.filter = `blur(${blurPx}px)`;
-      ctx.drawImage(video, srcX, srcY, srcW, srcH, 0, 0, dw, dh);
+      ctx.drawImage(video, 0, 0, dw, dh);
       ctx.filter = "none";
-      // 2. Clip ellipse per wajah, draw sharp on top
       if (scaledBoxes.length > 0) {
         ctx.save();
         ctx.beginPath();
         for (const fb of scaledBoxes) {
-          ctx.ellipse(fb.x + fb.w / 2, fb.y + fb.h / 2,
-            fb.w / 2 * 1.55, fb.h / 2 * 1.70, 0, 0, Math.PI * 2);
+          ctx.ellipse(
+            fb.x + fb.w / 2,
+            fb.y + fb.h / 2,
+            (fb.w / 2) * 1.55,
+            (fb.h / 2) * 1.70,
+            0,
+            0,
+            Math.PI * 2
+          );
         }
         ctx.clip();
-        ctx.drawImage(video, srcX, srcY, srcW, srcH, 0, 0, dw, dh);
+        ctx.drawImage(video, 0, 0, dw, dh);
         ctx.restore();
       }
       return;
     }
 
     if (currentFilter === "face_soft_blur") {
-      // 1. Draw sharp full frame (already done above)
-      // 2. Clip ellipse per wajah, draw blurred on top
       if (scaledBoxes.length > 0) {
         ctx.save();
         ctx.beginPath();
         for (const fb of scaledBoxes) {
-          ctx.ellipse(fb.x + fb.w / 2, fb.y + fb.h / 2,
-            fb.w / 2 * 1.1, fb.h / 2 * 1.1, 0, 0, Math.PI * 2);
+          ctx.ellipse(
+            fb.x + fb.w / 2,
+            fb.y + fb.h / 2,
+            (fb.w / 2) * 1.1,
+            (fb.h / 2) * 1.1,
+            0,
+            0,
+            Math.PI * 2
+          );
         }
         ctx.clip();
         ctx.filter = `blur(${blurPx}px)`;
-        ctx.drawImage(video, srcX, srcY, srcW, srcH, 0, 0, dw, dh);
+        ctx.drawImage(video, 0, 0, dw, dh);
         ctx.filter = "none";
         ctx.restore();
       }
@@ -492,59 +493,46 @@ export default function CameraPage() {
     applyLiveFilter(ctx, dw, dh, currentFilter, scaledBoxes, blurStrengthRef.current);
   }, []);
 
-
   /* ── Draw animated scan overlay on canvas ── */
   const drawScanOverlay = useCallback((frame: number) => {
     const canvas = overlayCanvasRef.current;
     const video = videoRef.current;
-    if (!canvas || !video || video.clientWidth === 0) return;
+    if (!canvas || !video || video.videoWidth === 0) return;
 
-    const displayW = video.clientWidth;
-    const displayH = video.clientHeight;
-    if (canvas.width !== displayW || canvas.height !== displayH) {
-      canvas.width = displayW;
-      canvas.height = displayH;
+    const vw = video.videoWidth;
+    const vh = video.videoHeight;
+    const dw = Math.round(vw / 2);
+    const dh = Math.round(vh / 2);
+    if (canvas.width !== dw || canvas.height !== dh) {
+      canvas.width = dw;
+      canvas.height = dh;
     }
 
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-    ctx.clearRect(0, 0, displayW, displayH);
+    ctx.clearRect(0, 0, dw, dh);
 
     const boxes = faceBoxesRef.current;
-    const vw = video.videoWidth || displayW;
-    const vh = video.videoHeight || displayH;
     const hasFaces = boxes.length > 0;
     const mirrored = isMirroredRef.current;
-
-    // ── Cover-crop transform (match what CSS object-fit:cover does) ──
-    const coverScale = Math.max(displayW / vw, displayH / vh);
-    const srcW = displayW / coverScale;
-    const srcH = displayH / coverScale;
-    const srcX = (vw - srcW) / 2;
-    const srcY = (vh - srcH) / 2;
-    // Video-pixel → overlay-canvas-pixel:  subtract crop offset, then multiply by coverScale
-    const toDispX = coverScale;
-    const toDispY = coverScale;
+    const scaleX = dw / vw;
+    const scaleY = dh / vh;
 
     if (hasFaces) {
-      // ── Detected: draw ellipse focus ring around face ──
       for (const fb of boxes) {
-        // Map from video-pixel space → display-canvas space using cover crop
-        let rawX = (fb.x - srcX) * toDispX;
-        const rawY = (fb.y - srcY) * toDispY;
-        const rawW = fb.w * toDispX;
-        const rawH = fb.h * toDispY;
-        // Flip X if mirrored
-        const bx = mirrored ? displayW - rawX - rawW : rawX;
+        const rawX = fb.x * scaleX;
+        const rawY = fb.y * scaleY;
+        const rawW = fb.w * scaleX;
+        const rawH = fb.h * scaleY;
+        const bx = mirrored ? dw - rawX - rawW : rawX;
         const by = rawY;
         const bw = rawW;
         const bh = rawH;
 
-        // Ellipse center & radii (with padding)
         const ecx = bx + bw / 2;
         const ecy = by + bh / 2;
-        const erx = bw / 2 * 1.18; // slightly wider than face box
-        const ery = bh / 2 * 1.22; // slightly taller (include hair)
+        const erx = (bw / 2) * 1.18;
+        const ery = (bh / 2) * 1.22;
 
         const pulse = 0.75 + 0.25 * Math.sin(frame * 0.12);
 
@@ -562,14 +550,14 @@ export default function CameraPage() {
         ctx.strokeStyle = `rgba(34, 197, 94, ${pulse})`;
         ctx.lineWidth = 2.5;
         ctx.setLineDash([Math.PI * erx * 0.15, Math.PI * erx * 0.05]);
-        ctx.lineDashOffset = -(frame * 1.5); // rotating dashes
+        ctx.lineDashOffset = -(frame * 1.5);
         ctx.beginPath();
         ctx.ellipse(ecx, ecy, erx, ery, 0, 0, Math.PI * 2);
         ctx.stroke();
         ctx.setLineDash([]);
         ctx.shadowBlur = 0;
 
-        // Label badge above face
+        // Label badge
         const label = "WAJAH TERDETEKSI";
         ctx.font = "bold 10px monospace";
         const tw = ctx.measureText(label).width;
@@ -580,33 +568,33 @@ export default function CameraPage() {
         ctx.roundRect(badgeX, badgeY, tw + 12, 16, 4);
         ctx.fill();
         ctx.fillStyle = "#fff";
-        ctx.shadowBlur = 0;
         ctx.fillText(label, badgeX + 6, badgeY + 11);
       }
     } else {
-      // ── Scanning: draw sweeping line across frame ──
-      const sweepY = (frame * 3) % (displayH + 60) - 30;
+      // Idle scan indicator
+      const sweepY = (frame * 3) % (dh + 60) - 30;
       const scanGrad = ctx.createLinearGradient(0, sweepY - 20, 0, sweepY + 20);
       scanGrad.addColorStop(0, "rgba(251, 191, 36, 0)");
       scanGrad.addColorStop(0.5, "rgba(251, 191, 36, 0.55)");
       scanGrad.addColorStop(1, "rgba(251, 191, 36, 0)");
       ctx.fillStyle = scanGrad;
-      ctx.fillRect(0, sweepY - 20, displayW, 40);
+      ctx.fillRect(0, sweepY - 20, dw, 40);
 
-      // Corner brackets (screen-level, amber, pulsing)
-      const L2 = 36;
-      const p2 = 16;
+      const L2 = 24;
+      const p2 = 12;
       const pulse2 = 0.5 + 0.5 * Math.sin(frame * 0.08);
       ctx.strokeStyle = `rgba(251, 191, 36, ${0.6 + 0.4 * pulse2})`;
       ctx.lineWidth = 2;
       ctx.shadowColor = "#fbbf24";
       ctx.shadowBlur = 8;
       ctx.lineCap = "round";
-      const screenCorners: [number, number, number, number][] = [
-        [p2, p2, 1, 1], [displayW - p2, p2, -1, 1],
-        [p2, displayH - p2, 1, -1], [displayW - p2, displayH - p2, -1, -1],
+      const corners: [number, number, number, number][] = [
+        [p2, p2, 1, 1],
+        [dw - p2, p2, -1, 1],
+        [p2, dh - p2, 1, -1],
+        [dw - p2, dh - p2, -1, -1],
       ];
-      for (const [cx2, cy2, dx, dy] of screenCorners) {
+      for (const [cx2, cy2, dx, dy] of corners) {
         ctx.beginPath();
         ctx.moveTo(cx2 + dx * L2, cy2);
         ctx.lineTo(cx2, cy2);
@@ -705,6 +693,10 @@ export default function CameraPage() {
             const vh = videoRef.current.videoHeight;
             const fps = track?.getSettings().frameRate;
             setResolution(`${vw}×${vh}${fps ? ` • ${Math.round(fps)}fps` : ""}`);
+            // Auto-switch to cover mode for portrait video on landscape screen
+            if (vh > vw) {
+              setFitMode("cover");
+            }
           }
         };
         videoRef.current.play().catch(console.error);
@@ -767,6 +759,13 @@ export default function CameraPage() {
       });
     });
 
+    peer.on("connection", (conn) => {
+      phoneConnRef.current = conn;
+      conn.on("close", () => {
+        phoneConnRef.current = null;
+      });
+    });
+
     const cleanPath = window.location.pathname.endsWith("/")
       ? window.location.pathname
       : `${window.location.pathname}/`;
@@ -826,10 +825,29 @@ export default function CameraPage() {
     localStorage.setItem("pckv_camera_device_id", deviceId);
   };
 
-  // Flip front/back camera on phone (via MediaDevices facingMode toggle)
+  // Flip front/back camera (works for phone remote stream, multi-device switcher, or facingMode)
   const handleFlipPhoneCamera = useCallback(async () => {
+    // 1. If connected to phone camera via PeerJS: signal the phone to toggle front/back
+    if (phoneConnected && phoneConnRef.current) {
+      try {
+        phoneConnRef.current.send({ type: "FLIP_CAMERA" });
+        return;
+      } catch (e) {
+        console.warn("Failed to send FLIP_CAMERA to phone:", e);
+      }
+    }
+
+    // 2. If multiple local cameras exist on Mac/PC/mobile: cycle through them
+    if (devices.length > 1) {
+      const currentIdx = devices.findIndex((d) => d.deviceId === selectedDeviceId);
+      const nextIdx = (currentIdx + 1) % devices.length;
+      handleSelectCamera(devices[nextIdx].deviceId);
+      return;
+    }
+
+    // 3. Fallback: try switching facingMode on current local stream
     if (!videoRef.current) return;
-    const currentStream = remoteStreamRef.current || localStreamRef.current;
+    const currentStream = localStreamRef.current;
     if (!currentStream) return;
     const track = currentStream.getVideoTracks()[0];
     const settings = track?.getSettings() as (MediaTrackSettings & { facingMode?: string }) | undefined;
@@ -840,32 +858,25 @@ export default function CameraPage() {
         video: { facingMode: { exact: nextFacing }, width: { ideal: 1920 }, height: { ideal: 1080 } },
         audio: false,
       });
-      // Stop old tracks
       currentStream.getVideoTracks().forEach((t) => t.stop());
-      if (remoteStreamRef.current) {
-        remoteStreamRef.current = newStream;
-      } else {
-        localStreamRef.current = newStream;
-      }
+      localStreamRef.current = newStream;
       videoRef.current.srcObject = newStream;
       videoRef.current.play().catch(console.error);
     } catch {
-      // facingMode exact may fail on desktop — try without exact
       try {
         const newStream = await navigator.mediaDevices.getUserMedia({
           video: { facingMode: nextFacing },
           audio: false,
         });
         currentStream.getVideoTracks().forEach((t) => t.stop());
-        if (remoteStreamRef.current) remoteStreamRef.current = newStream;
-        else localStreamRef.current = newStream;
+        localStreamRef.current = newStream;
         videoRef.current.srcObject = newStream;
         videoRef.current.play().catch(console.error);
       } catch (err) {
         console.warn("Cannot flip camera:", err);
       }
     }
-  }, []);
+  }, [phoneConnected, devices, selectedDeviceId]);
 
   /* ── 5. Capture Photo ── */
   const capturePhoto = useCallback(() => {
@@ -899,7 +910,7 @@ export default function CameraPage() {
       ctx.translate(outW / 2, outH / 2);
       if (rotation !== 0) ctx.rotate((rotation * Math.PI) / 180);
       if (isMirrored) ctx.scale(-1, 1);
-      ctx.drawImage(liveCanvas, -outW / 2, -outH / 2, outW, outH);
+      ctx.drawImage(liveCanvas, -rawW / 2, -rawH / 2, rawW, rawH);
       ctx.restore();
 
       const b64 = canvas.toDataURL("image/png", 1.0).split(",")[1];
@@ -1006,7 +1017,7 @@ export default function CameraPage() {
                   ctx.translate(outW / 2, outH / 2);
                   if (rotation !== 0) ctx.rotate((rotation * Math.PI) / 180);
                   if (isMirrored) ctx.scale(-1, 1);
-                  ctx.drawImage(liveCanvasQ, -outW / 2, -outH / 2, outW, outH);
+                  ctx.drawImage(liveCanvasQ, -rawW / 2, -rawH / 2, rawW, rawH);
                   ctx.restore();
                   const b64 = canvas.toDataURL("image/png", 1.0).split(",")[1];
                   quickPhotos.push(b64);
@@ -1116,13 +1127,17 @@ export default function CameraPage() {
       ? "brightness(105%) contrast(103%)"
       : "none";
 
-  const viewportStyle = {
-    width: rotation % 180 !== 0 ? "calc(100vh - 56px)" : "100%",
-    height: rotation % 180 !== 0 ? "100vw" : "100%",
-    maxWidth: rotation % 180 !== 0 ? "calc(100vh - 56px)" : "100%",
-    maxHeight: rotation % 180 !== 0 ? "100vw" : "100%",
+  const isSideways = rotation % 180 !== 0;
+  const viewportStyle: React.CSSProperties = {
+    position: "absolute",
+    top: "50%",
+    left: "50%",
+    width: isSideways ? "calc(100vh - 56px)" : "100%",
+    height: isSideways ? "100vw" : "100%",
+    maxWidth: isSideways ? "calc(100vh - 56px)" : "100%",
+    maxHeight: isSideways ? "100vw" : "100%",
     transform: `translate(-50%, -50%) rotate(${rotation}deg) ${isMirrored ? "scaleX(-1)" : ""}`,
-    objectFit: fitMode === "cover" ? "cover" as const : "contain" as const,
+    objectFit: fitMode,
   };
 
   return (
@@ -1139,10 +1154,9 @@ export default function CameraPage() {
         playsInline
         muted
         autoPlay
-        className="absolute top-1/2 left-1/2 transition-all duration-200"
+        className="absolute transition-all duration-200"
         style={{
           ...viewportStyle,
-          objectFit: fitMode === "cover" ? "cover" : "contain",
           filter: videoCssFilter,
           // When face filter active: hide video visually, show render canvas instead
           opacity: FACE_FILTERS.includes(liveFilter) ? 0 : 1,
@@ -1151,14 +1165,14 @@ export default function CameraPage() {
       />
 
       {/* ── Live Face Filter Render Canvas (replaces video when face filter active) ── */}
+      {/* Canvas does NOT support objectFit — we use same style as video so it overlaps exactly */}
       <canvas
         ref={liveRenderCanvasRef}
-        className="absolute top-1/2 left-1/2 pointer-events-none"
+        className="absolute pointer-events-none"
         style={{
           ...viewportStyle,
-          // canvas does not support objectFit — size it to match video display area
-          // Cover mode: fill container, Contain: fit inside
-          objectFit: fitMode === "cover" ? "cover" : "contain",
+          // Override transform: canvas content is already cover-cropped internally, no CSS scaleX needed here
+          // (mirror is done by drawLiveFilter flipping srcX)
           opacity: FACE_FILTERS.includes(liveFilter) ? 1 : 0,
           transition: "opacity 0.2s",
           zIndex: 8,
@@ -1169,15 +1183,13 @@ export default function CameraPage() {
       {/* NOTE: overlay canvas uses NO CSS scaleX mirror — face coords are flipped manually in drawScanOverlay */}
       <canvas
         ref={overlayCanvasRef}
-        className="absolute top-1/2 left-1/2 pointer-events-none z-10"
+        className="absolute pointer-events-none z-10"
         style={{
           // Same size/position as video but WITHOUT scaleX(-1) — text stays readable
-          width: viewportStyle.width,
-          height: viewportStyle.height,
-          maxWidth: viewportStyle.maxWidth,
-          maxHeight: viewportStyle.maxHeight,
-          transform: `translate(-50%, -50%) rotate(${rotation}deg)`,
-          objectFit: fitMode === "cover" ? "cover" : "contain",
+          ...viewportStyle,
+          transform: rotation % 180 !== 0
+            ? `translate(-50%, -50%) rotate(${rotation}deg)`
+            : `translate(-50%, -50%)`,
           opacity: needsFaceTracker ? 1 : 0,
           transition: "opacity 0.3s",
         }}
@@ -1327,11 +1339,11 @@ export default function CameraPage() {
         <button
           onClick={() => setFitMode((prev) => (prev === "cover" ? "contain" : "cover"))}
           className={`w-10 h-10 rounded-full backdrop-blur-sm text-white flex items-center justify-center transition-colors border border-white/10 ${
-            fitMode === "contain" ? "bg-rose-600" : "bg-black/60 hover:bg-black/80"
+            fitMode === "cover" ? "bg-rose-600" : "bg-black/60 hover:bg-black/80"
           }`}
-          title={fitMode === "cover" ? "Mode: Penuh" : "Mode: Pas"}
+          title={fitMode === "cover" ? "Layar Penuh (Klik untuk Mode Pas / Fit)" : "Layar Pas (Klik untuk Mode Penuh / Fill)"}
         >
-          {fitMode === "cover" ? <Maximize size={18} /> : <Minimize size={18} />}
+          {fitMode === "cover" ? <Minimize size={18} /> : <Maximize size={18} />}
         </button>
 
         <button

@@ -149,11 +149,26 @@ export default function PhotostripEditor() {
       ctx.roundRect(x, y, photoW, photoH, 12);
       ctx.clip();
 
+      // Aspect-fill (cover crop) to preserve original aspect ratio without distortion
+      const targetRatio = photoW / photoH;
+      const imgRatio = img.width / img.height;
+      let baseW = img.width;
+      let baseH = img.height;
+      if (imgRatio > targetRatio) {
+        // Image is wider than slot: crop horizontal sides
+        baseW = img.height * targetRatio;
+      } else {
+        // Image is taller than slot (e.g. portrait camera): crop vertical sides
+        baseH = img.width / targetRatio;
+      }
+
       // Calculate Source Rect with Zoom & Pan Offset
-      const sWidth = img.width / zoom;
-      const sHeight = img.height / zoom;
-      const sX = Math.max(0, Math.min(img.width - sWidth, (img.width - sWidth) / 2 + (offsetX / 100) * (img.width - sWidth)));
-      const sY = Math.max(0, Math.min(img.height - sHeight, (img.height - sHeight) / 2 + (offsetY / 100) * (img.height - sHeight)));
+      const sWidth = baseW / zoom;
+      const sHeight = baseH / zoom;
+      const maxOffsetX = img.width - sWidth;
+      const maxOffsetY = img.height - sHeight;
+      const sX = Math.max(0, Math.min(maxOffsetX, (img.width - sWidth) / 2 + (offsetX / 100) * (maxOffsetX / 2)));
+      const sY = Math.max(0, Math.min(maxOffsetY, (img.height - sHeight) / 2 + (offsetY / 100) * (maxOffsetY / 2)));
 
       ctx.drawImage(img, sX, sY, sWidth, sHeight, x, y, photoW, photoH);
       ctx.restore();
