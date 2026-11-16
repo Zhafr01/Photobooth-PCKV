@@ -331,7 +331,7 @@ export default function CameraPage() {
     const canvas = liveRenderCanvasRef.current;
     if (!canvas) return;
 
-    // Half display resolution → 4× fewer pixels, CSS scales it up (no flicker, no throttle)
+    // Half display resolution → 4× fewer pixels, CSS scales it up
     const dw = Math.max(1, Math.round(video.clientWidth / 2));
     const dh = Math.max(1, Math.round(video.clientHeight / 2));
     if (dw === 0 || dh === 0) return;
@@ -344,23 +344,36 @@ export default function CameraPage() {
     const ctx = canvas.getContext("2d", { willReadFrequently: true });
     if (!ctx) return;
 
-    // Draw video frame straight (NO internal mirror — CSS viewportStyle handles scaleX(-1))
-    ctx.drawImage(video, 0, 0, dw, dh);
+    const vw = video.videoWidth || dw * 2;
+    const vh = video.videoHeight || dh * 2;
+
+    // ── Object-fit COVER crop: match what CSS does to the video element ──
+    // Scale so video FILLS canvas (no letterbox), then center-crop excess
+    const coverScale = Math.max(dw / vw, dh / vh);
+    const srcW = dw / coverScale;   // visible width in video-pixels
+    const srcH = dh / coverScale;   // visible height in video-pixels
+    const srcX = (vw - srcW) / 2;  // center-crop X offset in video-pixels
+    const srcY = (vh - srcH) / 2;  // center-crop Y offset in video-pixels
+
+    // Draw with cover crop (NO internal mirror — CSS viewportStyle handles scaleX(-1))
+    ctx.drawImage(video, srcX, srcY, srcW, srcH, 0, 0, dw, dh);
 
     const currentFilter = liveFilterRef.current;
     if (currentFilter === "normal") return;
 
-    // Scale faceBoxes from video-space → half-display-space
-    const vw = video.videoWidth || dw * 2;
-    const vh = video.videoHeight || dh * 2;
-    const sx = dw / vw;
-    const sy = dh / vh;
-    const scaledBoxes: FaceBox[] = faceBoxesRef.current.map(fb => ({
-      x: fb.x * sx,
-      y: fb.y * sy,
-      w: fb.w * sx,
-      h: fb.h * sy,
-    }));
+    // Map faceBoxes: video-pixel coords → crop-adjusted canvas coords
+    // Video px → canvas px:  subtract srcOffset, then multiply by (dw/srcW)
+    const toCanvasX = dw / srcW;  // = coverScale
+    const toCanvasY = dh / srcH;  // = coverScale
+    const scaledBoxes: FaceBox[] = faceBoxesRef.current
+      .map(fb => ({
+        x: (fb.x - srcX) * toCanvasX,
+        y: (fb.y - srcY) * toCanvasY,
+        w: fb.w * toCanvasX,
+        h: fb.h * toCanvasY,
+      }))
+      // Clamp to canvas bounds
+      .filter(fb => fb.x + fb.w > 0 && fb.y + fb.h > 0 && fb.x < dw && fb.y < dh);
 
     // Apply filter every frame (no throttle = no flicker)
     applyLiveFilter(ctx, dw, dh, currentFilter, scaledBoxes);
@@ -387,21 +400,31 @@ export default function CameraPage() {
     const boxes = faceBoxesRef.current;
     const vw = video.videoWidth || displayW;
     const vh = video.videoHeight || displayH;
-    const scaleX = displayW / vw;
-    const scaleY = displayH / vh;
     const hasFaces = boxes.length > 0;
     const mirrored = isMirroredRef.current;
+
+    // ── Cover-crop transform (match what CSS object-fit:cover does) ──
+    const coverScale = Math.max(displayW / vw, displayH / vh);
+    const srcW = displayW / coverScale;
+    const srcH = displayH / coverScale;
+    const srcX = (vw - srcW) / 2;
+    const srcY = (vh - srcH) / 2;
+    // Video-pixel → overlay-canvas-pixel:  subtract crop offset, then multiply by coverScale
+    const toDispX = coverScale;
+    const toDispY = coverScale;
 
     if (hasFaces) {
       // ── Detected: draw corner-bracket focus boxes ──
       for (const fb of boxes) {
-        // Flip X coordinate if mirrored (overlay canvas has NO CSS scaleX, coords are absolute)
-        const rawX = fb.x * scaleX;
-        const rawW = fb.w * scaleX;
+        // Map from video-pixel space → display-canvas space using cover crop
+        let rawX = (fb.x - srcX) * toDispX;
+        const rawY = (fb.y - srcY) * toDispY;
+        const rawW = fb.w * toDispX;
+        const h = fb.h * toDispY;
+        // Flip X if mirrored
         const x = mirrored ? displayW - rawX - rawW : rawX;
-        const y = fb.y * scaleY;
+        const y = rawY;
         const w = rawW;
-        const h = fb.h * scaleY;
         const pad = 10;
         const bx = x - pad, by = y - pad, bw = w + pad * 2, bh = h + pad * 2;
         const L = Math.min(bw, bh) * 0.22; // corner bracket length
@@ -1101,220 +1124,172 @@ export default function CameraPage() {
       {/* ── Right Sidebar ── */}
       <AnimatePresence>
         {sidebarOpen && (
-          <motion.div
-            initial={{ x: 288, opacity: 0 }}
-            animate={{ x: 0, opacity: 1 }}
-            exit={{ x: 288, opacity: 0 }}
-            transition={{ type: "spring", stiffness: 320, damping: 32 }}
-            className="absolute top-0 right-0 h-full w-72 z-20 bg-black/90 backdrop-blur-md flex flex-col gap-4 p-5 pt-20 border-l border-white/10 overflow-y-auto"
-          >
-            {/* ── Camera Connect Section ── */}
-            <div>
-              <p className="flex items-center gap-1.5 text-xs text-gray-300 font-semibold uppercase tracking-wider mb-2">
-                <Video size={13} className="text-rose-500" /> Koneksi Kamera
-              </p>
-
-              {/* Status badge */}
-              <div className="mb-2 px-2.5 py-1.5 bg-white/5 border border-white/10 rounded-xl flex items-center gap-2">
-                <span className="text-xs text-gray-400">Sumber aktif:</span>
-                <span className="text-xs font-semibold text-white">{cameraSourceLabel}</span>
-              </div>
-
-              {/* Device dropdown + refresh */}
-              <div className="flex gap-1.5 mb-2">
-                <select
-                  value={phoneConnected ? "phone" : selectedDeviceId}
-                  onChange={(e) => {
-                    if (e.target.value === "phone") setShowPhoneModal(true);
-                    else handleSelectCamera(e.target.value);
-                  }}
-                  className="flex-1 bg-white/10 text-white text-xs rounded-xl p-2.5 border border-white/20 focus:outline-none focus:border-rose-500"
-                >
-                  {phoneConnected && <option value="phone" className="bg-gray-900 text-emerald-400">📱 Kamera HP (Wireless)</option>}
-                  {devices.map((device, idx) => (
-                    <option key={device.deviceId} value={device.deviceId} className="bg-gray-900 text-white">
-                      {device.label || `Kamera ${idx + 1}`}
-                    </option>
-                  ))}
-                  {devices.length === 0 && <option disabled className="bg-gray-900 text-gray-500">Tidak ada kamera terdeteksi</option>}
-                </select>
+          <>
+            {/* Backdrop — click anywhere outside to close */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 z-[19] bg-black/30"
+              onClick={() => setSidebarOpen(false)}
+            />
+            <motion.div
+              initial={{ x: 288, opacity: 0 }}
+              animate={{ x: 0, opacity: 1 }}
+              exit={{ x: 288, opacity: 0 }}
+              transition={{ type: "spring", stiffness: 320, damping: 32 }}
+              className="absolute top-0 right-0 h-full w-72 z-20 bg-black/90 backdrop-blur-md flex flex-col gap-4 p-5 border-l border-white/10 overflow-y-auto"
+            >
+              {/* Header + close button */}
+              <div className="flex items-center justify-between pt-2 pb-2 border-b border-white/10 flex-shrink-0">
+                <span className="text-sm font-semibold text-white flex items-center gap-1.5">
+                  <SlidersHorizontal size={15} className="text-rose-500" /> Pengaturan
+                </span>
                 <button
-                  onClick={refreshDevices}
-                  className="w-9 h-9 flex items-center justify-center bg-white/10 hover:bg-white/20 text-white rounded-xl transition-colors flex-shrink-0"
-                  title="Refresh daftar kamera"
+                  onClick={() => setSidebarOpen(false)}
+                  className="w-7 h-7 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition-colors"
+                  title="Tutup sidebar"
                 >
-                  <RefreshCw size={14} />
+                  <X size={14} />
                 </button>
               </div>
 
-              {/* HP Wireless */}
-              <button
-                onClick={() => setShowPhoneModal(true)}
-                className={`w-full py-2 rounded-xl text-xs font-medium flex items-center justify-center gap-1.5 transition-colors mb-1.5 ${
-                  phoneConnected
-                    ? "bg-emerald-600/80 text-white hover:bg-emerald-600"
-                    : "bg-white/10 hover:bg-white/20 text-white"
-                }`}
-              >
-                <Smartphone size={14} className={phoneConnected ? "text-white" : "text-rose-400"} />
-                {phoneConnected ? "✓ HP Terhubung (Klik untuk info)" : "📱 Sambungkan HP (WiFi)"}
-              </button>
-
-              {/* USB/Capture Card info */}
-              <div className="bg-white/5 border border-white/10 rounded-xl p-2.5">
-                <p className="flex items-center gap-1.5 text-xs text-gray-300 font-semibold mb-1">
-                  <Usb size={12} className="text-blue-400" /> USB / Capture Card
-                </p>
-                <p className="text-xs text-gray-500 leading-relaxed">
-                  Pasang <strong className="text-gray-300">DroidCam</strong> atau <strong className="text-gray-300">Iriun Webcam</strong> di HP + PC, lalu hubungkan via USB — kamera muncul otomatis di dropdown.
-                </p>
-              </div>
-            </div>
-
-            {/* ── Filter Section ── */}
-            <div>
-              <p className="flex items-center gap-1.5 text-xs text-gray-300 font-semibold uppercase tracking-wider mb-2">
-                <SlidersHorizontal size={13} className="text-rose-500" /> Filter Kamera
-              </p>
-
-              {/* Normal / Warna filters */}
-              <p className="text-[10px] text-gray-500 uppercase tracking-wider mb-1.5 font-mono">Warna & Efek</p>
-              <div className="grid grid-cols-2 gap-1.5 mb-3">
-                {LIVE_FILTERS.filter(f => !FACE_FILTERS.includes(f.id)).map((f) => (
-                  <button
-                    key={f.id}
-                    onClick={() => setLiveFilter(f.id)}
-                    className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium transition-all ${
-                      liveFilter === f.id
-                        ? "bg-rose-600 text-white shadow-sm"
-                        : "bg-white/10 text-gray-300 hover:bg-white/20"
-                    }`}
-                  >
-                    <span className="text-sm">{f.emoji}</span>
-                    <span>{f.label}</span>
-                  </button>
-                ))}
-              </div>
-
-              {/* AI Face filters */}
-              <p className="text-[10px] text-gray-500 uppercase tracking-wider mb-1.5 font-mono flex items-center gap-1">
-                🤖 AI Face Filter
-              </p>
-              <div className="grid grid-cols-2 gap-1.5">
-                {LIVE_FILTERS.filter(f => FACE_FILTERS.includes(f.id)).map((f) => (
-                  <button
-                    key={f.id}
-                    onClick={() => setLiveFilter(f.id)}
-                    className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium transition-all border ${
-                      liveFilter === f.id
-                        ? "bg-green-600 text-white shadow-sm border-green-400/50"
-                        : "bg-white/5 text-green-300 hover:bg-green-900/40 border-green-800/40"
-                    }`}
-                    title={`${f.label} — AI Face Filter`}
-                  >
-                    <span className="text-sm">{f.emoji}</span>
-                    <span>{f.label}</span>
-                  </button>
-                ))}
-              </div>
-              {FACE_FILTERS.includes(liveFilter) && (
-                <p className="text-[10px] text-green-600/80 mt-2 font-mono">
-                  🤖 AI Face Aktif — scan wajah berjalan
-                </p>
-              )}
-            </div>
-
-            {/* ── Face Tracker Section ── */}
-            <div>
-              <p className="flex items-center gap-1.5 text-xs text-gray-300 font-semibold uppercase tracking-wider mb-2">
-                <Scan size={13} className="text-rose-500" /> Face Tracker
-              </p>
-              <div className="bg-white/5 border border-white/10 rounded-xl p-3 flex flex-col gap-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs text-gray-300">Overlay Deteksi Wajah</span>
-                  <button
-                    onClick={() => setShowFaceOverlay((p) => !p)}
-                    className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all ${
-                      showFaceOverlay ? "bg-green-600 text-white" : "bg-white/10 text-gray-400 hover:bg-white/20"
-                    }`}
-                  >
-                    {showFaceOverlay ? "ON" : "OFF"}
-                  </button>
-                </div>
-                {faceTrackerLoading && (
-                  <p className="text-xs text-yellow-400 flex items-center gap-1.5">
-                    <span className="animate-spin inline-block">⟳</span> Memuat model AI...
-                  </p>
-                )}
-                {faceTrackerReady && faceBoxes.length > 0 && (
-                  <p className="text-xs text-green-400">✓ {faceBoxes.length} wajah terdeteksi</p>
-                )}
-                {faceTrackerReady && faceBoxes.length === 0 && showFaceOverlay && (
-                  <p className="text-xs text-gray-500">Tidak ada wajah di frame</p>
-                )}
-                <p className="text-xs text-gray-600">Filter Spotlight / Blur BG / Beauty / Soft Blur / Funny otomatis aktifkan scanner wajah.</p>
-              </div>
-            </div>
-
-            {/* ── Mode Selector ── */}
-            <div>
-              <p className="flex items-center gap-1.5 text-xs text-gray-300 font-semibold uppercase tracking-wider mb-2">
-                <Layers size={13} className="text-rose-500" /> Mode Foto
-              </p>
-              <div className="flex flex-col gap-1.5">
-                {[
-                  { id: "single", label: "1 Foto (Single)" },
-                  { id: "burst3", label: "3 Foto (Burst)" },
-                  { id: "burst4", label: "4 Foto (Photostrip)" },
-                  { id: "quick", label: "⚡ Quick Mode (1-Sentuhan)" },
-                ].map((m) => (
-                  <button
-                    key={m.id}
-                    onClick={() => { setMode(m.id as Mode); setCapturedPhotos([]); }}
-                    className={`py-2 px-3 rounded-xl text-xs font-medium text-left transition-all ${
-                      mode === m.id ? "bg-rose-600 text-white" : "bg-white/10 text-gray-300 hover:bg-white/20"
-                    }`}
-                  >
-                    {m.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* ── Timer ── */}
-            {mode !== "quick" && (
+              {/* ── Camera Connect Section ── */}
               <div>
                 <p className="flex items-center gap-1.5 text-xs text-gray-300 font-semibold uppercase tracking-wider mb-2">
-                  <Clock size={13} className="text-rose-500" /> Timer Hitung Mundur
+                  <Video size={13} className="text-rose-500" /> Koneksi Kamera
                 </p>
-                <div className="flex gap-2">
-                  {COUNTDOWN_OPTIONS.map((s) => (
-                    <button
-                      key={s}
-                      onClick={() => setCountdownSecs(s)}
-                      className={`flex-1 py-2 rounded-xl text-xs font-medium transition-all ${
-                        countdownSecs === s ? "bg-rose-600 text-white" : "bg-white/10 text-gray-300 hover:bg-white/20"
-                      }`}
-                    >
-                      {s}s
+                <div className="mb-2 px-2.5 py-1.5 bg-white/5 border border-white/10 rounded-xl flex items-center gap-2">
+                  <span className="text-xs text-gray-400">Sumber aktif:</span>
+                  <span className="text-xs font-semibold text-white">{cameraSourceLabel}</span>
+                </div>
+                <div className="flex gap-1.5 mb-2">
+                  <select
+                    value={phoneConnected ? "phone" : selectedDeviceId}
+                    onChange={(e) => { if (e.target.value === "phone") setShowPhoneModal(true); else handleSelectCamera(e.target.value); }}
+                    className="flex-1 bg-white/10 text-white text-xs rounded-xl p-2.5 border border-white/20 focus:outline-none focus:border-rose-500"
+                  >
+                    {phoneConnected && <option value="phone" className="bg-gray-900 text-emerald-400">📱 Kamera HP (Wireless)</option>}
+                    {devices.map((device, idx) => (
+                      <option key={device.deviceId} value={device.deviceId} className="bg-gray-900 text-white">
+                        {device.label || `Kamera ${idx + 1}`}
+                      </option>
+                    ))}
+                    {devices.length === 0 && <option disabled className="bg-gray-900 text-gray-500">Tidak ada kamera terdeteksi</option>}
+                  </select>
+                  <button onClick={refreshDevices} className="w-9 h-9 flex items-center justify-center bg-white/10 hover:bg-white/20 text-white rounded-xl transition-colors flex-shrink-0" title="Refresh">
+                    <RefreshCw size={14} />
+                  </button>
+                </div>
+                <button
+                  onClick={() => setShowPhoneModal(true)}
+                  className={`w-full py-2 rounded-xl text-xs font-medium flex items-center justify-center gap-1.5 transition-colors mb-1.5 ${phoneConnected ? "bg-emerald-600/80 text-white hover:bg-emerald-600" : "bg-white/10 hover:bg-white/20 text-white"}`}
+                >
+                  <Smartphone size={14} className={phoneConnected ? "text-white" : "text-rose-400"} />
+                  {phoneConnected ? "✓ HP Terhubung (Klik untuk info)" : "📱 Sambungkan HP (WiFi)"}
+                </button>
+                <div className="bg-white/5 border border-white/10 rounded-xl p-2.5">
+                  <p className="flex items-center gap-1.5 text-xs text-gray-300 font-semibold mb-1"><Usb size={12} className="text-blue-400" /> USB / Capture Card</p>
+                  <p className="text-xs text-gray-500 leading-relaxed">Pasang <strong className="text-gray-300">DroidCam</strong> atau <strong className="text-gray-300">Iriun Webcam</strong> di HP + PC, lalu hubungkan via USB.</p>
+                </div>
+              </div>
+
+              {/* ── Filter Section ── */}
+              <div>
+                <p className="flex items-center gap-1.5 text-xs text-gray-300 font-semibold uppercase tracking-wider mb-2">
+                  <SlidersHorizontal size={13} className="text-rose-500" /> Filter Kamera
+                </p>
+                <p className="text-[10px] text-gray-500 uppercase tracking-wider mb-1.5 font-mono">Warna & Efek</p>
+                <div className="grid grid-cols-2 gap-1.5 mb-3">
+                  {LIVE_FILTERS.filter(f => !FACE_FILTERS.includes(f.id)).map((f) => (
+                    <button key={f.id} onClick={() => setLiveFilter(f.id)}
+                      className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium transition-all ${liveFilter === f.id ? "bg-rose-600 text-white shadow-sm" : "bg-white/10 text-gray-300 hover:bg-white/20"}`}>
+                      <span className="text-sm">{f.emoji}</span><span>{f.label}</span>
+                    </button>
+                  ))}
+                </div>
+                <p className="text-[10px] text-gray-500 uppercase tracking-wider mb-1.5 font-mono">🤖 AI Face Filter</p>
+                <div className="grid grid-cols-2 gap-1.5">
+                  {LIVE_FILTERS.filter(f => FACE_FILTERS.includes(f.id)).map((f) => (
+                    <button key={f.id} onClick={() => setLiveFilter(f.id)}
+                      className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium transition-all border ${liveFilter === f.id ? "bg-green-600 text-white shadow-sm border-green-400/50" : "bg-white/5 text-green-300 hover:bg-green-900/40 border-green-800/40"}`}>
+                      <span className="text-sm">{f.emoji}</span><span>{f.label}</span>
+                    </button>
+                  ))}
+                </div>
+                {FACE_FILTERS.includes(liveFilter) && <p className="text-[10px] text-green-600/80 mt-2 font-mono">🤖 AI Face Aktif — scan wajah berjalan</p>}
+              </div>
+
+              {/* ── Face Tracker Section ── */}
+              <div>
+                <p className="flex items-center gap-1.5 text-xs text-gray-300 font-semibold uppercase tracking-wider mb-2">
+                  <Scan size={13} className="text-rose-500" /> Face Tracker
+                </p>
+                <div className="bg-white/5 border border-white/10 rounded-xl p-3 flex flex-col gap-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-gray-300">Overlay Deteksi Wajah</span>
+                    <button onClick={() => setShowFaceOverlay((p) => !p)}
+                      className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all ${showFaceOverlay ? "bg-green-600 text-white" : "bg-white/10 text-gray-400 hover:bg-white/20"}`}>
+                      {showFaceOverlay ? "ON" : "OFF"}
+                    </button>
+                  </div>
+                  {faceTrackerLoading && <p className="text-xs text-yellow-400 flex items-center gap-1.5"><span className="animate-spin inline-block">⟳</span> Memuat model AI...</p>}
+                  {faceTrackerReady && faceBoxes.length > 0 && <p className="text-xs text-green-400">✓ {faceBoxes.length} wajah terdeteksi</p>}
+                  {faceTrackerReady && faceBoxes.length === 0 && showFaceOverlay && <p className="text-xs text-gray-500">Tidak ada wajah di frame</p>}
+                  <p className="text-xs text-gray-600">Filter AI otomatis aktifkan scanner wajah.</p>
+                </div>
+              </div>
+
+              {/* ── Mode Selector ── */}
+              <div>
+                <p className="flex items-center gap-1.5 text-xs text-gray-300 font-semibold uppercase tracking-wider mb-2">
+                  <Layers size={13} className="text-rose-500" /> Mode Foto
+                </p>
+                <div className="flex flex-col gap-1.5">
+                  {[
+                    { id: "single", label: "1 Foto (Single)" },
+                    { id: "burst3", label: "3 Foto (Burst)" },
+                    { id: "burst4", label: "4 Foto (Photostrip)" },
+                    { id: "quick", label: "⚡ Quick Mode (1-Sentuhan)" },
+                  ].map((m) => (
+                    <button key={m.id} onClick={() => { setMode(m.id as Mode); setCapturedPhotos([]); }}
+                      className={`py-2 px-3 rounded-xl text-xs font-medium text-left transition-all ${mode === m.id ? "bg-rose-600 text-white" : "bg-white/10 text-gray-300 hover:bg-white/20"}`}>
+                      {m.label}
                     </button>
                   ))}
                 </div>
               </div>
-            )}
 
-            {/* ── Upload ── */}
-            <div className="mt-auto pt-4 border-t border-white/10">
-              <label className="flex items-center justify-center gap-2 py-2.5 w-full rounded-xl bg-white/10 text-gray-200 text-xs font-medium cursor-pointer hover:bg-white/20 transition-colors">
-                <Upload size={15} /> Unggah Berkas Foto
-                <input type="file" accept="image/*" multiple className="hidden" onChange={handleFileUpload} />
-              </label>
-            </div>
-          </motion.div>
+              {/* ── Timer ── */}
+              {mode !== "quick" && (
+                <div>
+                  <p className="flex items-center gap-1.5 text-xs text-gray-300 font-semibold uppercase tracking-wider mb-2">
+                    <Clock size={13} className="text-rose-500" /> Timer Hitung Mundur
+                  </p>
+                  <div className="flex gap-2">
+                    {COUNTDOWN_OPTIONS.map((s) => (
+                      <button key={s} onClick={() => setCountdownSecs(s)}
+                        className={`flex-1 py-2 rounded-xl text-xs font-medium transition-all ${countdownSecs === s ? "bg-rose-600 text-white" : "bg-white/10 text-gray-300 hover:bg-white/20"}`}>
+                        {s}s
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* ── Upload ── */}
+              <div className="mt-auto pt-4 border-t border-white/10">
+                <label className="flex items-center justify-center gap-2 py-2.5 w-full rounded-xl bg-white/10 text-gray-200 text-xs font-medium cursor-pointer hover:bg-white/20 transition-colors">
+                  <Upload size={15} /> Unggah Berkas Foto
+                  <input type="file" accept="image/*" multiple className="hidden" onChange={handleFileUpload} />
+                </label>
+              </div>
+            </motion.div>
+          </>
         )}
       </AnimatePresence>
 
-      {/* ── Countdown Overlay ── */}
+            {/* ── Countdown Overlay ── */}
       <AnimatePresence>
         {countdown !== null && (
           <motion.div
