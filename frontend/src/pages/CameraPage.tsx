@@ -68,7 +68,8 @@ export default function CameraPage() {
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const streamRef = useRef<MediaStream | null>(null);
+  const localStreamRef = useRef<MediaStream | null>(null);
+  const remoteStreamRef = useRef<MediaStream | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordedChunksRef = useRef<Blob[]>([]);
   const peerRef = useRef<Peer | null>(null);
@@ -111,7 +112,7 @@ export default function CameraPage() {
     }
   }, [selectedDeviceId]);
 
-  /* ── 2. Start Camera Stream ── */
+  /* ── 2. Start Camera Stream (Local Webcam) ── */
   const startCamera = useCallback(async (deviceIdToUse?: string) => {
     if (!navigator?.mediaDevices?.getUserMedia) {
       console.warn("navigator.mediaDevices.getUserMedia tidak tersedia (bukan HTTPS/localhost)");
@@ -119,9 +120,10 @@ export default function CameraPage() {
       return;
     }
 
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((t) => t.stop());
-      streamRef.current = null;
+    // Hentikan stream webcam lokal yang lama
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach((t) => t.stop());
+      localStreamRef.current = null;
     }
 
     const constraints: MediaStreamConstraints = {
@@ -133,9 +135,10 @@ export default function CameraPage() {
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
-      streamRef.current = stream;
+      localStreamRef.current = stream;
 
-      if (videoRef.current) {
+      // Pasang ke video element jika tidak sedang tersambung ke HP
+      if (videoRef.current && !remoteStreamRef.current) {
         videoRef.current.srcObject = stream;
         videoRef.current.onloadedmetadata = () => {
           videoRef.current?.play().catch(console.error);
@@ -148,9 +151,9 @@ export default function CameraPage() {
       console.warn("Primary camera constraints failed, trying generic video fallback:", err);
       try {
         const fallbackStream = await navigator.mediaDevices.getUserMedia({ video: true });
-        streamRef.current = fallbackStream;
+        localStreamRef.current = fallbackStream;
 
-        if (videoRef.current) {
+        if (videoRef.current && !remoteStreamRef.current) {
           videoRef.current.srcObject = fallbackStream;
           videoRef.current.onloadedmetadata = () => {
             videoRef.current?.play().catch(console.error);
@@ -177,9 +180,18 @@ export default function CameraPage() {
     peer.on("call", (call) => {
       call.answer();
       call.on("stream", (remotePhoneStream) => {
-        streamRef.current = remotePhoneStream;
+        // Hentikan webcam lokal agar tidak bentrok
+        if (localStreamRef.current) {
+          localStreamRef.current.getTracks().forEach((t) => t.stop());
+          localStreamRef.current = null;
+        }
+
+        remoteStreamRef.current = remotePhoneStream;
         if (videoRef.current) {
           videoRef.current.srcObject = remotePhoneStream;
+          videoRef.current.onloadedmetadata = () => {
+            videoRef.current?.play().catch(console.error);
+          };
           videoRef.current.play().catch(console.error);
         }
         setPhoneConnected(true);
@@ -199,6 +211,8 @@ export default function CameraPage() {
 
     return () => {
       peer.destroy();
+      remoteStreamRef.current?.getTracks().forEach((t) => t.stop());
+      remoteStreamRef.current = null;
     };
   }, []);
 
@@ -208,8 +222,9 @@ export default function CameraPage() {
 
     if (!phoneConnected) {
       startCamera(selectedDeviceId || undefined).then(() => {
-        if (isCancelled && streamRef.current) {
-          streamRef.current.getTracks().forEach((t) => t.stop());
+        if (isCancelled && localStreamRef.current) {
+          localStreamRef.current.getTracks().forEach((t) => t.stop());
+          localStreamRef.current = null;
         }
       });
     }
@@ -221,8 +236,10 @@ export default function CameraPage() {
 
     return () => {
       isCancelled = true;
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach((t) => t.stop());
+      // PENTING: Hanya hentikan localStream, JANGAN hentikan remoteStream (kamera HP)!
+      if (localStreamRef.current) {
+        localStreamRef.current.getTracks().forEach((t) => t.stop());
+        localStreamRef.current = null;
       }
       if (navigator?.mediaDevices?.removeEventListener) {
         navigator.mediaDevices.removeEventListener("devicechange", handleDeviceChange);
@@ -231,6 +248,10 @@ export default function CameraPage() {
   }, [selectedDeviceId, startCamera, refreshDevices, phoneConnected]);
 
   const handleSelectCamera = (deviceId: string) => {
+    if (remoteStreamRef.current) {
+      remoteStreamRef.current.getTracks().forEach((t) => t.stop());
+      remoteStreamRef.current = null;
+    }
     setPhoneConnected(false);
     setSelectedDeviceId(deviceId);
     localStorage.setItem("pckv_camera_device_id", deviceId);
@@ -269,10 +290,11 @@ export default function CameraPage() {
 
   // Start MediaRecorder for Video Sesi
   const startRecordingVideo = useCallback(() => {
-    if (!streamRef.current) return;
+    const activeStream = remoteStreamRef.current || localStreamRef.current;
+    if (!activeStream) return;
     try {
       recordedChunksRef.current = [];
-      const recorder = new MediaRecorder(streamRef.current, {
+      const recorder = new MediaRecorder(activeStream, {
         mimeType: MediaRecorder.isTypeSupported("video/webm") ? "video/webm" : "",
       });
       recorder.ondataavailable = (e) => {

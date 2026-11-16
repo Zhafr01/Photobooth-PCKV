@@ -124,6 +124,7 @@ export default function RemoteCameraPage() {
       <div className="w-full flex-1 my-4 flex items-center justify-center relative overflow-hidden rounded-2xl border border-white/10 bg-gray-950">
         <video
           ref={videoRef}
+          autoPlay
           playsInline
           muted
           className={`w-full h-full object-cover ${facingMode === "user" ? "scale-x-[-1]" : ""}`}
