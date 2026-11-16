@@ -67,7 +67,7 @@ const initialState: PhotoboothState = {
   currentPhotoIndex: 0,
   activeFilters: [],
   photostripLayout: "strip4",
-  photostripFrame: { color: "#FFFFFF", borderRadius: 8, borderWidth: 16 },
+  photostripFrame: { color: "#FDE2E4", themeId: "ai_coquette_bows", borderRadius: 8, borderWidth: 18 },
   photostripStickers: [],
   captionText: "",
   sessionGallery: getInitialGallery(),

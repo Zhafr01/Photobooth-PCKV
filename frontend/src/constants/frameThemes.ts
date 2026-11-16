@@ -1,9 +1,11 @@
 export interface FrameTheme {
   id: string;
   name: string;
-  category: "klasik" | "pastel" | "gradient" | "vintage" | "pattern";
-  type: "solid" | "gradient" | "pattern" | "film";
+  category: "ai_art" | "klasik" | "pastel" | "gradient" | "vintage" | "pattern";
+  type: "image" | "solid" | "gradient" | "pattern" | "film";
   color: string;
+  imageUrl?: string;
+  badge?: string;
   gradient?: [string, string];
   pattern?: "polka" | "checker" | "grid" | "hearts";
   textColor?: string;
@@ -12,6 +14,58 @@ export interface FrameTheme {
 }
 
 export const FRAME_THEMES: FrameTheme[] = [
+  // ── 🎨 AI Aesthetic Illustrated Frames (Gemini Generated) ──
+  {
+    id: "ai_coquette_bows",
+    name: "Coquette Pink Bows",
+    category: "ai_art",
+    type: "image",
+    imageUrl: "frames/frame_coquette_bows.jpg",
+    color: "#FDE2E4",
+    textColor: "#831843",
+    badge: "✨ AI",
+  },
+  {
+    id: "ai_y2k_chrome",
+    name: "Y2K Cyber Chrome",
+    category: "ai_art",
+    type: "image",
+    imageUrl: "frames/frame_y2k_chrome.jpg",
+    color: "#18181B",
+    textColor: "#FFFFFF",
+    badge: "✨ AI",
+  },
+  {
+    id: "ai_vintage_analog",
+    name: "35mm Analog Film",
+    category: "ai_art",
+    type: "image",
+    imageUrl: "frames/frame_vintage_analog.jpg",
+    color: "#111111",
+    textColor: "#FACC15",
+    badge: "✨ AI",
+  },
+  {
+    id: "ai_kawaii_doodles",
+    name: "Purikura Kawaii Doodles",
+    category: "ai_art",
+    type: "image",
+    imageUrl: "frames/frame_kawaii_doodles.jpg",
+    color: "#FEF9C3",
+    textColor: "#713F12",
+    badge: "✨ AI",
+  },
+  {
+    id: "ai_dreamy_clouds",
+    name: "Dreamy Seoul Clouds",
+    category: "ai_art",
+    type: "image",
+    imageUrl: "frames/frame_dreamy_clouds.jpg",
+    color: "#E0F2FE",
+    textColor: "#1E3A8A",
+    badge: "✨ AI",
+  },
+
   // ── Klasik & Studio ──
   { id: "white", name: "Putih Studio", category: "klasik", type: "solid", color: "#FFFFFF", textColor: "#1A1A1A" },
   { id: "black", name: "Hitam Editorial", category: "klasik", type: "solid", color: "#18181B", textColor: "#FFFFFF" },

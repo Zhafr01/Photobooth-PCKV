@@ -323,6 +323,10 @@ export default function CameraPage() {
   // Frame theme on camera
   const [showFrameDrawer, setShowFrameDrawer] = useState(false);
   const [selectedFrameTheme, setSelectedFrameTheme] = useState<FrameTheme>(() => {
+    if (state.photostripFrame?.themeId) {
+      const byId = FRAME_THEMES.find((f) => f.id === state.photostripFrame.themeId);
+      if (byId) return byId;
+    }
     const found = FRAME_THEMES.find((f) => f.color.toLowerCase() === state.photostripFrame.color.toLowerCase());
     return found || FRAME_THEMES[0];
   });
@@ -1348,7 +1352,7 @@ export default function CameraPage() {
         >
           <Frame size={15} />
           <span className="hidden sm:inline">Bingkai:</span>
-          <span>{selectedFrameTheme.name}</span>
+          <span className="max-w-[90px] sm:max-w-[140px] truncate">{selectedFrameTheme.name}</span>
         </button>
 
         <button
@@ -1515,7 +1519,7 @@ export default function CameraPage() {
                       key={theme.id}
                       onClick={() => {
                         setSelectedFrameTheme(theme);
-                        dispatch({ type: "SET_FRAME", payload: { color: theme.color } });
+                        dispatch({ type: "SET_FRAME", payload: { color: theme.color, themeId: theme.id } });
                       }}
                       className={`flex items-center gap-2 p-2 rounded-xl text-xs font-medium border text-left transition-all ${
                         selectedFrameTheme.id === theme.id
@@ -1840,7 +1844,7 @@ export default function CameraPage() {
                     key={theme.id}
                     onClick={() => {
                       setSelectedFrameTheme(theme);
-                      dispatch({ type: "SET_FRAME", payload: { color: theme.color } });
+                      dispatch({ type: "SET_FRAME", payload: { color: theme.color, themeId: theme.id } });
                       setShowFrameDrawer(false);
                     }}
                     className={`flex items-center gap-2.5 p-3 rounded-2xl border text-left transition-all ${
@@ -1850,12 +1854,29 @@ export default function CameraPage() {
                     }`}
                   >
                     <span
-                      className="w-7 h-7 rounded-xl border border-white/30 flex-shrink-0 shadow-sm"
-                      style={{ background: theme.color }}
+                      className="w-8 h-8 rounded-xl border border-white/30 flex-shrink-0 shadow-sm overflow-hidden"
+                      style={
+                        theme.type === "image" && theme.imageUrl
+                          ? {
+                              backgroundImage: `url(${import.meta.env.BASE_URL}${theme.imageUrl})`,
+                              backgroundSize: "cover",
+                              backgroundPosition: "center",
+                            }
+                          : { background: theme.color }
+                      }
                     />
                     <div className="min-w-0 flex-1">
-                      <p className="text-xs font-bold text-white truncate">{theme.name}</p>
-                      <p className="text-[10px] text-gray-400 capitalize">{theme.category}</p>
+                      <div className="flex items-center gap-1.5">
+                        <p className="text-xs font-bold text-white truncate">{theme.name}</p>
+                        {theme.badge && (
+                          <span className="text-[9px] bg-rose-600 px-1 rounded text-white font-bold flex-shrink-0">
+                            AI
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[10px] text-gray-400 capitalize">
+                        {theme.category === "ai_art" ? "✨ Ilustrasi AI" : theme.category}
+                      </p>
                     </div>
                   </button>
                 ))}

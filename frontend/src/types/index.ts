@@ -2,6 +2,7 @@ export type PhotostripLayout = "strip3" | "strip4" | "grid2x2" | "singleCard";
 
 export interface FrameStyle {
   color: string;
+  themeId?: string;
   borderRadius: number;
   borderWidth: number;
 }

@@ -5,7 +5,7 @@ import { usePhotobooth } from "../store/photoboothStore";
 import type { Sticker, PhotostripLayout } from "../types";
 import {
   ArrowRight, Loader2, ZoomIn, Frame, Sparkles,
-  Type, Palette, Move, RotateCcw, X, Camera
+  Type, Palette, Move, RotateCcw, X, Camera, SlidersHorizontal
 } from "lucide-react";
 import {
   FRAME_THEMES,
@@ -14,50 +14,12 @@ import {
   type FrameTheme
 } from "../constants/frameThemes";
 
-function generatePlaceholderPhotos(): string[] {
-  const canvas = document.createElement("canvas");
-  canvas.width = 640;
-  canvas.height = 480;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return [];
-
-  const cards = [
-    { g1: "#fda085", g2: "#f6d365", label: "Pose 1 ✌️", tag: "Contoh Foto Booth" },
-    { g1: "#a18cd1", g2: "#fbc2eb", label: "Pose 2 🌸", tag: "Contoh Foto Booth" },
-    { g1: "#84fab0", g2: "#8fd3f4", label: "Pose 3 ✨", tag: "Contoh Foto Booth" },
-    { g1: "#ff9a9e", g2: "#fecfef", label: "Pose 4 💖", tag: "Contoh Foto Booth" },
-  ];
-
-  return cards.map((c) => {
-    const grad = ctx.createLinearGradient(0, 0, 640, 480);
-    grad.addColorStop(0, c.g1);
-    grad.addColorStop(1, c.g2);
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, 640, 480);
-
-    ctx.fillStyle = "rgba(255, 255, 255, 0.25)";
-    ctx.beginPath();
-    ctx.arc(320, 210, 80, 0, Math.PI * 2);
-    ctx.fill();
-
-    ctx.beginPath();
-    ctx.ellipse(320, 380, 140, 95, 0, 0, Math.PI * 2);
-    ctx.fill();
-
-    ctx.fillStyle = "#ffffff";
-    ctx.textAlign = "center";
-    ctx.shadowColor = "rgba(0,0,0,0.3)";
-    ctx.shadowBlur = 6;
-    ctx.font = "bold 38px 'Montserrat', sans-serif";
-    ctx.fillText(c.label, 320, 225);
-
-    ctx.font = "600 20px 'Montserrat', sans-serif";
-    ctx.fillText(c.tag, 320, 275);
-    ctx.shadowBlur = 0;
-
-    return canvas.toDataURL("image/png").split(",")[1];
-  });
-}
+const DEMO_POSES = [
+  `${import.meta.env.BASE_URL}demo/pose1.jpg`,
+  `${import.meta.env.BASE_URL}demo/pose2.jpg`,
+  `${import.meta.env.BASE_URL}demo/pose3.jpg`,
+  `${import.meta.env.BASE_URL}demo/pose4.jpg`,
+];
 
 /* ── 4. TEXT COLOR PALETTE ── */
 const TEXT_COLORS = [
@@ -81,6 +43,10 @@ export default function PhotostripEditor() {
 
   // Frame Theme Selection
   const [selectedTheme, setSelectedTheme] = useState<FrameTheme>(() => {
+    if (state.photostripFrame?.themeId) {
+      const byId = FRAME_THEMES.find((f) => f.id === state.photostripFrame.themeId);
+      if (byId) return byId;
+    }
     const found = FRAME_THEMES.find((f) => f.color.toLowerCase() === state.photostripFrame.color.toLowerCase());
     return found || FRAME_THEMES[0];
   });
@@ -115,10 +81,15 @@ export default function PhotostripEditor() {
   const [offsetX, setOffsetX] = useState(state.photoOffsetX || 0);
   const [offsetY, setOffsetY] = useState(state.photoOffsetY || 0);
 
+  // Border thickness & layout controls ("bordernya ketebelan")
+  const [borderPad, setBorderPad] = useState<number>(18); // Default 18px (Sleek Korean Photobooth)
+  const [photoGap, setPhotoGap] = useState<number>(12); // Default 12px
+  const [photoRadius, setPhotoRadius] = useState<number>(8); // Default 8px
+  const [showPhotoBorder, setShowPhotoBorder] = useState<boolean>(true); // Crisp card stroke
+
   const rawPhotos = state.filteredPhotos.length > 0 ? state.filteredPhotos : state.capturedPhotos;
   const isDemo = rawPhotos.length === 0;
-  const [demoPhotos] = useState<string[]>(() => generatePlaceholderPhotos());
-  const photos = isDemo ? demoPhotos : rawPhotos;
+  const photos = isDemo ? DEMO_POSES : rawPhotos;
   const layout = state.photostripLayout;
 
   /* ── Sticker Actions ── */
@@ -163,56 +134,71 @@ export default function PhotostripEditor() {
     let canvasWidth = 600;
     let canvasHeight = 1800;
     let count = 4;
-    let photoW = 520;
-    let photoH = 360;
-    let pad = selectedTheme.type === "film" ? 52 : 40;
-    const headerH = showHeader ? 110 : 40;
-    const footerH = caption || showDate ? 140 : 50;
+    let pad = borderPad;
+
+    const topH = showHeader ? 75 : 24;
+    const bottomH = caption || showDate ? 95 : 24;
 
     if (layout === "strip3") {
       canvasWidth = 600;
       canvasHeight = 1800;
       count = 3;
-      photoW = canvasWidth - pad * 2;
-      photoH = 480;
     } else if (layout === "grid2x2") {
       canvasWidth = 1200;
       canvasHeight = 1800;
       count = 4;
-      pad = selectedTheme.type === "film" ? 64 : 50;
-      photoW = 520;
-      photoH = 700;
+      pad = Math.round(borderPad * 1.5);
     } else if (layout === "singleCard") {
       canvasWidth = 1200;
       canvasHeight = 1800;
       count = 1;
-      pad = selectedTheme.type === "film" ? 64 : 50;
-      photoW = canvasWidth - pad * 2;
-      photoH = 1450;
-    } else {
-      // strip4
-      photoW = canvasWidth - pad * 2;
-      photoH = 360;
+      pad = Math.round(borderPad * 1.5);
     }
 
     canvas.width = canvasWidth;
     canvas.height = canvasHeight;
 
+    const loadImg = (srcOrB64: string): Promise<HTMLImageElement> =>
+      new Promise((res) => {
+        const img = new Image();
+        img.crossOrigin = "anonymous";
+        const src =
+          srcOrB64.startsWith("data:") || srcOrB64.startsWith("http") || srcOrB64.startsWith("/") || srcOrB64.startsWith(".")
+            ? srcOrB64
+            : `data:image/png;base64,${srcOrB64}`;
+        img.onload = () => res(img);
+        img.onerror = () => {
+          const c = document.createElement("canvas");
+          c.width = 400; c.height = 300;
+          const cx = c.getContext("2d")!;
+          cx.fillStyle = "#fecdd3";
+          cx.fillRect(0, 0, 400, 300);
+          const fallback = new Image();
+          fallback.onload = () => res(fallback);
+          fallback.src = c.toDataURL();
+        };
+        img.src = src;
+      });
+
     // ── 1. Draw Frame Background ──
-    if (selectedTheme.type === "film") {
+    if (selectedTheme.type === "image" && selectedTheme.imageUrl) {
+      // AI Illustrated Aesthetic Frame Background (Gemini)
+      const frameImg = await loadImg(`${import.meta.env.BASE_URL}${selectedTheme.imageUrl}`);
+      ctx.drawImage(frameImg, 0, 0, canvas.width, canvas.height);
+    } else if (selectedTheme.type === "film") {
       // Authentic 35mm film strip with sprocket holes
       ctx.fillStyle = "#121212";
       ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-      const holeW = 16, holeH = 26, holeR = 6;
-      const holeStep = 55;
+      const holeW = 14, holeH = 22, holeR = 4;
+      const holeStep = 50;
       ctx.fillStyle = "#F8FAFC";
-      for (let hy = 20; hy < canvas.height - 20; hy += holeStep) {
+      for (let hy = 16; hy < canvas.height - 16; hy += holeStep) {
         ctx.beginPath();
-        ctx.roundRect(10, hy, holeW, holeH, holeR);
+        ctx.roundRect(pad > 26 ? 8 : 4, hy, holeW, holeH, holeR);
         ctx.fill();
         ctx.beginPath();
-        ctx.roundRect(canvas.width - 26, hy, holeW, holeH, holeR);
+        ctx.roundRect(canvas.width - (pad > 26 ? 22 : 18), hy, holeW, holeH, holeR);
         ctx.fill();
       }
     } else if (selectedTheme.type === "gradient" && selectedTheme.gradient) {
@@ -226,18 +212,18 @@ export default function PhotostripEditor() {
       ctx.fillRect(0, 0, canvas.width, canvas.height);
 
       if (selectedTheme.pattern === "polka") {
-        ctx.fillStyle = selectedTheme.borderColor || "rgba(244, 114, 182, 0.4)";
-        const step = 48;
-        for (let py = 20; py < canvas.height; py += step) {
-          for (let px = 20; px < canvas.width; px += step) {
+        ctx.fillStyle = selectedTheme.borderColor || "rgba(244, 114, 182, 0.35)";
+        const step = 42;
+        for (let py = 16; py < canvas.height; py += step) {
+          for (let px = 16; px < canvas.width; px += step) {
             ctx.beginPath();
-            ctx.arc(px, py, 4, 0, Math.PI * 2);
+            ctx.arc(px, py, 3.5, 0, Math.PI * 2);
             ctx.fill();
           }
         }
       } else if (selectedTheme.pattern === "checker") {
         ctx.fillStyle = "rgba(255, 255, 255, 0.08)";
-        const sq = 36;
+        const sq = 32;
         for (let py = 0; py < canvas.height; py += sq) {
           for (let px = 0; px < canvas.width; px += sq) {
             if ((Math.floor(px / sq) + Math.floor(py / sq)) % 2 === 0) {
@@ -246,9 +232,10 @@ export default function PhotostripEditor() {
           }
         }
       } else if (selectedTheme.pattern === "grid") {
-        ctx.strokeStyle = "rgba(148, 163, 184, 0.35)";
-        ctx.lineWidth = 1.5;
-        const gStep = 40;
+        // Delicate, soft notebook grid lines
+        ctx.strokeStyle = "rgba(100, 116, 139, 0.16)";
+        ctx.lineWidth = 1;
+        const gStep = 32;
         ctx.beginPath();
         for (let px = gStep; px < canvas.width; px += gStep) {
           ctx.moveTo(px, 0); ctx.lineTo(px, canvas.height);
@@ -258,11 +245,11 @@ export default function PhotostripEditor() {
         }
         ctx.stroke();
       } else if (selectedTheme.pattern === "hearts") {
-        ctx.fillStyle = "rgba(251, 113, 133, 0.25)";
-        ctx.font = "22px serif";
+        ctx.fillStyle = "rgba(251, 113, 133, 0.22)";
+        ctx.font = "18px serif";
         ctx.textAlign = "center";
-        for (let py = 35; py < canvas.height; py += 75) {
-          for (let px = 35; px < canvas.width; px += 75) {
+        for (let py = 30; py < canvas.height; py += 64) {
+          for (let px = 30; px < canvas.width; px += 64) {
             ctx.fillText("♥", px, py);
           }
         }
@@ -274,9 +261,9 @@ export default function PhotostripEditor() {
 
       if (selectedTheme.hasDoubleBorder) {
         ctx.strokeStyle = "rgba(0,0,0,0.12)";
-        ctx.lineWidth = 3;
-        ctx.strokeRect(16, 16, canvas.width - 32, canvas.height - 32);
-        ctx.strokeRect(22, 22, canvas.width - 44, canvas.height - 44);
+        ctx.lineWidth = 2;
+        ctx.strokeRect(10, 10, canvas.width - 20, canvas.height - 20);
+        ctx.strokeRect(15, 15, canvas.width - 30, canvas.height - 30);
       }
     }
 
@@ -296,39 +283,52 @@ export default function PhotostripEditor() {
       ctx.fillStyle = resolvedTextColor;
       ctx.font = `bold ${headerSize}px ${headerFont}`;
       ctx.textAlign = "center";
-      ctx.fillText(headerText, canvas.width / 2, 70);
+      ctx.textBaseline = "middle";
+      ctx.fillText(headerText, canvas.width / 2, Math.round(topH / 2 + 8));
     }
 
-    // ── 3. Load & Draw Photos with Aspect-Fill (Cover Crop) & Adjustments ──
-    const loadImg = (b64: string): Promise<HTMLImageElement> =>
-      new Promise((res, rej) => {
-        const img = new Image();
-        const src = b64.startsWith("data:") ? b64 : `data:image/png;base64,${b64}`;
-        img.onload = () => res(img);
-        img.onerror = rej;
-        img.src = src;
-      });
+    // ── 3. Calculate Photo Dimensions (Sleek Korean Photobooth Math) ──
+    let photoW = canvas.width - pad * 2;
+    let photoH = 390;
 
+    if (layout === "strip4") {
+      const availH = canvas.height - topH - bottomH - 3 * photoGap;
+      photoH = Math.floor(availH / 4);
+    } else if (layout === "strip3") {
+      const availH = canvas.height - topH - bottomH - 2 * photoGap;
+      photoH = Math.floor(availH / 3);
+    } else if (layout === "grid2x2") {
+      const colGap = Math.round(photoGap * 1.3);
+      photoW = Math.floor((canvas.width - pad * 2 - colGap) / 2);
+      const availH = canvas.height - topH - bottomH - colGap;
+      photoH = Math.floor(availH / 2);
+    } else if (layout === "singleCard") {
+      photoW = canvas.width - pad * 2;
+      photoH = canvas.height - topH - bottomH;
+    }
+
+    // ── 4. Load & Draw Photos with Aspect-Fill (Cover Crop) & Adjustments ──
     const usedPhotos = photos.slice(0, count);
     const imgEls = await Promise.all(usedPhotos.map(loadImg));
 
     imgEls.forEach((img, i) => {
       let x = pad;
-      let y = headerH + i * (photoH + 24);
+      let y = topH + i * (photoH + photoGap);
 
       if (layout === "grid2x2") {
+        const colGap = Math.round(photoGap * 1.3);
         const col = i % 2;
         const row = Math.floor(i / 2);
-        x = pad + col * (photoW + 40);
-        y = headerH + row * (photoH + 40);
+        x = pad + col * (photoW + colGap);
+        y = topH + row * (photoH + colGap);
       } else if (layout === "singleCard") {
         x = pad;
-        y = headerH + 20;
+        y = topH;
       }
 
       ctx.save();
       ctx.beginPath();
-      ctx.roundRect(x, y, photoW, photoH, 12);
+      ctx.roundRect(x, y, photoW, photoH, photoRadius);
       ctx.clip();
 
       // Aspect-fill (cover crop) to preserve original aspect ratio without distortion
@@ -351,9 +351,23 @@ export default function PhotostripEditor() {
 
       ctx.drawImage(img, sX, sY, sWidth, sHeight, x, y, photoW, photoH);
       ctx.restore();
+
+      // Delicate photo card stroke/border
+      if (showPhotoBorder) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.roundRect(x, y, photoW, photoH, photoRadius);
+        ctx.strokeStyle =
+          selectedTheme.type === "image" || selectedTheme.color === "#18181B"
+            ? "rgba(255, 255, 255, 0.55)"
+            : "rgba(0, 0, 0, 0.12)";
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+        ctx.restore();
+      }
     });
 
-    // ── 4. Draw Themed Stickers ──
+    // ── 5. Draw Themed Stickers ──
     stickers.forEach((s) => {
       ctx.font = `${s.size || 48}px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", serif`;
       ctx.textAlign = "center";
@@ -363,23 +377,27 @@ export default function PhotostripEditor() {
       ctx.fillText(s.emoji, sx, sy);
     });
 
-    // ── 5. Draw Footer: Caption & Date (Separate Mixed Fonts!) ──
+    // ── 6. Draw Footer: Caption & Date (Separate Mixed Fonts!) ──
     if (caption || showDate) {
-      const fy = canvas.height - footerH + 45;
+      const fy = canvas.height - Math.round(bottomH / 2);
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
 
-      if (caption) {
+      if (caption && showDate) {
         ctx.fillStyle = resolvedTextColor;
         ctx.font = `bold ${captionSize}px ${captionFont}`;
-        ctx.textAlign = "center";
-        ctx.fillText(caption, canvas.width / 2, fy);
-      }
+        ctx.fillText(caption, canvas.width / 2, fy - 11);
 
-      if (showDate) {
+        ctx.font = `${dateSize}px ${dateFont}`;
+        ctx.fillText(dateCustomText, canvas.width / 2, fy + 15);
+      } else if (caption) {
+        ctx.fillStyle = resolvedTextColor;
+        ctx.font = `bold ${captionSize}px ${captionFont}`;
+        ctx.fillText(caption, canvas.width / 2, fy);
+      } else if (showDate) {
         ctx.fillStyle = resolvedTextColor;
         ctx.font = `${dateSize}px ${dateFont}`;
-        ctx.textAlign = "center";
-        const dateY = fy + (caption ? captionSize + 14 : 10);
-        ctx.fillText(dateCustomText, canvas.width / 2, dateY);
+        ctx.fillText(dateCustomText, canvas.width / 2, fy);
       }
     }
 
@@ -391,7 +409,8 @@ export default function PhotostripEditor() {
   }, [
     photos, layout, selectedTheme, stickers, caption, captionFont, captionSize,
     showHeader, headerText, headerFont, headerSize, showDate, dateFont, dateSize,
-    dateCustomText, textColorChoice, zoom, offsetX, offsetY, dispatch
+    dateCustomText, textColorChoice, zoom, offsetX, offsetY, borderPad, photoGap,
+    photoRadius, showPhotoBorder, dispatch
   ]);
 
   useEffect(() => {
@@ -400,9 +419,34 @@ export default function PhotostripEditor() {
     }
   }, [drawPhotostrip, photos.length]);
 
-  const handleProceed = () => {
+  const handleProceed = async () => {
     if (isDemo) {
-      dispatch({ type: "SET_CAPTURED_PHOTOS", payload: demoPhotos });
+      try {
+        const b64List = await Promise.all(
+          DEMO_POSES.map(async (url) => {
+            return new Promise<string>((resolve) => {
+              const img = new Image();
+              img.crossOrigin = "anonymous";
+              img.onload = () => {
+                const c = document.createElement("canvas");
+                c.width = img.naturalWidth || 640;
+                c.height = img.naturalHeight || 480;
+                const ctx = c.getContext("2d")!;
+                ctx.drawImage(img, 0, 0);
+                resolve(c.toDataURL("image/jpeg", 0.92).split(",")[1]);
+              };
+              img.onerror = () => resolve("");
+              img.src = url;
+            });
+          })
+        );
+        const valid = b64List.filter(Boolean);
+        if (valid.length > 0) {
+          dispatch({ type: "SET_CAPTURED_PHOTOS", payload: valid });
+        }
+      } catch (err) {
+        console.warn("Failed to convert demo poses:", err);
+      }
     }
     navigate("/result");
   };
@@ -496,6 +540,7 @@ export default function PhotostripEditor() {
                 <div className="flex flex-wrap gap-1 mb-3">
                   {[
                     { key: "all", label: "Semua" },
+                    { key: "ai_art", label: "✨ Ilustrasi AI" },
                     { key: "klasik", label: "Klasik" },
                     { key: "pastel", label: "Pastel" },
                     { key: "gradient", label: "Gradient" },
@@ -507,7 +552,7 @@ export default function PhotostripEditor() {
                       onClick={() => setFrameCategory(c.key)}
                       className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all ${
                         frameCategory === c.key
-                          ? "bg-rose-600 text-white"
+                          ? "bg-rose-600 text-white shadow-xs"
                           : "bg-gray-100 text-gray-600 hover:bg-gray-200"
                       }`}
                     >
@@ -517,11 +562,17 @@ export default function PhotostripEditor() {
                 </div>
 
                 {/* Frame Themes Grid */}
-                <div className="grid grid-cols-2 gap-2 max-h-[38vh] overflow-y-auto pr-1">
+                <div className="grid grid-cols-2 gap-2 max-h-[32vh] overflow-y-auto pr-1">
                   {filteredThemes.map((theme) => {
                     const isSelected = selectedTheme.id === theme.id;
-                    const bgStyle =
-                      theme.type === "gradient" && theme.gradient
+                    const bgStyle: React.CSSProperties =
+                      theme.type === "image" && theme.imageUrl
+                        ? {
+                            backgroundImage: `url(${import.meta.env.BASE_URL}${theme.imageUrl})`,
+                            backgroundSize: "cover",
+                            backgroundPosition: "center",
+                          }
+                        : theme.type === "gradient" && theme.gradient
                         ? { background: `linear-gradient(135deg, ${theme.gradient[0]}, ${theme.gradient[1]})` }
                         : { backgroundColor: theme.color };
 
@@ -530,20 +581,25 @@ export default function PhotostripEditor() {
                         key={theme.id}
                         onClick={() => {
                           setSelectedTheme(theme);
-                          dispatch({ type: "SET_FRAME", payload: { color: theme.color } });
+                          dispatch({ type: "SET_FRAME", payload: { color: theme.color, themeId: theme.id } });
                         }}
-                        className={`p-2.5 rounded-2xl border-2 text-left flex flex-col gap-2 transition-all relative overflow-hidden ${
+                        className={`p-2 rounded-2xl border-2 text-left flex flex-col gap-1.5 transition-all relative overflow-hidden ${
                           isSelected
-                            ? "border-rose-600 ring-2 ring-rose-300 shadow-sm"
+                            ? "border-rose-600 ring-2 ring-rose-300 shadow-sm bg-rose-50/20"
                             : "border-gray-200 hover:border-gray-300 bg-white"
                         }`}
                       >
                         <div
-                          className="w-full h-8 rounded-lg shadow-inner border border-black/10 flex items-center justify-center"
+                          className="w-full h-10 rounded-xl shadow-inner border border-black/10 flex items-center justify-center relative overflow-hidden"
                           style={bgStyle}
                         >
+                          {theme.badge && (
+                            <span className="text-[9px] font-bold text-white bg-rose-600/90 px-1.5 py-0.5 rounded-md shadow-xs backdrop-blur-xs">
+                              {theme.badge}
+                            </span>
+                          )}
                           {theme.type === "film" && (
-                            <span className="text-[9px] font-mono font-bold text-white tracking-widest">
+                            <span className="text-[9px] font-mono font-bold text-white tracking-widest bg-black/50 px-1 rounded">
                               🎞️ 35MM
                             </span>
                           )}
@@ -555,11 +611,113 @@ export default function PhotostripEditor() {
                         </div>
                         <div className="flex items-center justify-between">
                           <span className="text-[11px] font-bold text-gray-800 truncate">{theme.name}</span>
-                          {isSelected && <span className="w-2 h-2 rounded-full bg-rose-600" />}
+                          {isSelected && <span className="w-2 h-2 rounded-full bg-rose-600 flex-shrink-0" />}
                         </div>
                       </button>
                     );
                   })}
+                </div>
+              </div>
+
+              {/* ── BORDER THICKNESS & GAP CONTROLS ("bordernya ketebelan") ── */}
+              <div className="bg-gray-50 p-3.5 rounded-2xl border border-gray-200 space-y-3">
+                <div className="flex items-center justify-between">
+                  <label className="font-bold text-gray-900 text-xs uppercase tracking-wider flex items-center gap-1.5">
+                    <SlidersHorizontal size={14} className="text-rose-600" /> Ketebalan Border
+                  </label>
+                  <span className="text-[11px] font-mono font-bold text-rose-600 bg-rose-50 px-2 py-0.5 rounded-md border border-rose-200">
+                    {borderPad}px
+                  </span>
+                </div>
+
+                {/* Quick Presets */}
+                <div className="grid grid-cols-4 gap-1">
+                  {[
+                    { label: "Tipis", pad: 14, gap: 8, rad: 6 },
+                    { label: "Korea", pad: 18, gap: 12, rad: 8 },
+                    { label: "Sedang", pad: 26, gap: 16, rad: 10 },
+                    { label: "Tebal", pad: 38, gap: 20, rad: 12 },
+                  ].map((preset) => (
+                    <button
+                      key={preset.label}
+                      onClick={() => {
+                        setBorderPad(preset.pad);
+                        setPhotoGap(preset.gap);
+                        setPhotoRadius(preset.rad);
+                      }}
+                      className={`py-1.5 px-1 rounded-xl text-[11px] font-bold text-center border transition-all ${
+                        borderPad === preset.pad
+                          ? "bg-rose-600 text-white border-rose-600 shadow-xs"
+                          : "bg-white text-gray-700 border-gray-200 hover:border-gray-300"
+                      }`}
+                    >
+                      {preset.label}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Sliders */}
+                <div className="space-y-2 pt-1 text-xs text-gray-600">
+                  <div>
+                    <div className="flex justify-between text-[11px] mb-1">
+                      <span>Margin Tepi Bingkai</span>
+                      <span className="font-mono font-bold text-gray-800">{borderPad}px</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="8"
+                      max="48"
+                      step="2"
+                      value={borderPad}
+                      onChange={(e) => setBorderPad(Number(e.target.value))}
+                      className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-rose-600"
+                    />
+                  </div>
+
+                  <div>
+                    <div className="flex justify-between text-[11px] mb-1">
+                      <span>Jarak Antar Foto (Gap)</span>
+                      <span className="font-mono font-bold text-gray-800">{photoGap}px</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="4"
+                      max="28"
+                      step="2"
+                      value={photoGap}
+                      onChange={(e) => setPhotoGap(Number(e.target.value))}
+                      className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-rose-600"
+                    />
+                  </div>
+
+                  <div>
+                    <div className="flex justify-between text-[11px] mb-1">
+                      <span>Lengkungan Sudut Foto</span>
+                      <span className="font-mono font-bold text-gray-800">{photoRadius}px</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0"
+                      max="20"
+                      step="2"
+                      value={photoRadius}
+                      onChange={(e) => setPhotoRadius(Number(e.target.value))}
+                      className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-rose-600"
+                    />
+                  </div>
+
+                  {/* Photo Outline Toggle */}
+                  <div className="flex items-center justify-between pt-1 border-t border-gray-200">
+                    <span className="text-[11px] font-medium text-gray-700">Garis Tepi Foto (Outline)</span>
+                    <button
+                      onClick={() => setShowPhotoBorder((p) => !p)}
+                      className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all ${
+                        showPhotoBorder ? "bg-rose-600 text-white" : "bg-gray-200 text-gray-600"
+                      }`}
+                    >
+                      {showPhotoBorder ? "ON" : "OFF"}
+                    </button>
+                  </div>
                 </div>
               </div>
             </>
