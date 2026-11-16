@@ -62,14 +62,15 @@ function applyLiveFilter(
       }
     }
   } else if (filter === "face_blur_bg" && faceBoxes.length > 0) {
-    // Ellipse feathered mask: 0 = blur bg, 1 = keep face
+    // Build ellipse feathered mask (0=blur bg, 1=keep face sharp)
+    // Using bigger padding to avoid cutting off hair/forehead/neck
     const mask = new Float32Array(w * h);
     for (const fb of faceBoxes) {
       const cx = fb.x + fb.w / 2;
       const cy = fb.y + fb.h / 2;
-      const rx = fb.w / 2 * 1.20;
-      const ry = fb.h / 2 * 1.25;
-      const feather = 0.28;
+      const rx = fb.w / 2 * 1.55;   // wide enough for cheeks
+      const ry = fb.h / 2 * 1.70;   // tall enough for hair + neck
+      const feather = 0.30;
       const x0 = Math.max(0, Math.floor(cx - rx - 2));
       const y0 = Math.max(0, Math.floor(cy - ry - 2));
       const x1 = Math.min(w - 1, Math.ceil(cx + rx + 2));
@@ -85,37 +86,51 @@ function applyLiveFilter(
       }
     }
 
-    // Separable box blur: horizontal then vertical pass. O(k) per pixel -- no lag at high k.
+    // Separable box blur using prefix sums -- O(n) per row/col, correct at all edges
     const k = Math.max(1, Math.round(blurK));
     const tmp = new Float32Array(w * h * 3);
 
     // Horizontal pass
     for (let y = 0; y < h; y++) {
       let sr = 0, sg = 0, sb = 0;
-      for (let x2 = 0; x2 < k && x2 < w; x2++) { const p = (y * w + x2) * 4; sr += d[p]; sg += d[p+1]; sb += d[p+2]; }
+      // Build running prefix: sum pixels in [x-k .. x+k]
+      // Initialize with pixels 0..k
+      for (let ix = 0; ix <= Math.min(k, w - 1); ix++) {
+        const p = (y * w + ix) * 4; sr += d[p]; sg += d[p+1]; sb += d[p+2];
+      }
+      let lo = 0, hi = Math.min(k, w - 1);
       for (let x = 0; x < w; x++) {
-        const addX = Math.min(x + k, w - 1); const remX = Math.max(x - k - 1, 0);
-        const pa = (y * w + addX) * 4; sr += d[pa]; sg += d[pa+1]; sb += d[pa+2];
-        const pr = (y * w + remX) * 4; sr -= d[pr]; sg -= d[pr+1]; sb -= d[pr+2];
-        const cnt = addX - Math.max(x - k, 0) + 1;
+        // Extend right
+        const newHi = Math.min(x + k, w - 1);
+        while (hi < newHi) { hi++; const p = (y * w + hi) * 4; sr += d[p]; sg += d[p+1]; sb += d[p+2]; }
+        // Shrink left
+        const newLo = Math.max(x - k, 0);
+        while (lo < newLo) { const p = (y * w + lo) * 4; sr -= d[p]; sg -= d[p+1]; sb -= d[p+2]; lo++; }
+        const cnt = hi - lo + 1;
         const ti = (y * w + x) * 3; tmp[ti] = sr/cnt; tmp[ti+1] = sg/cnt; tmp[ti+2] = sb/cnt;
       }
     }
-    // Vertical pass + blend
+
+    // Vertical pass + blend with face mask
     for (let x = 0; x < w; x++) {
       let sr = 0, sg = 0, sb = 0;
-      for (let y2 = 0; y2 < k && y2 < h; y2++) { const ti = (y2 * w + x) * 3; sr += tmp[ti]; sg += tmp[ti+1]; sb += tmp[ti+2]; }
+      for (let iy = 0; iy <= Math.min(k, h - 1); iy++) {
+        const ti = (iy * w + x) * 3; sr += tmp[ti]; sg += tmp[ti+1]; sb += tmp[ti+2];
+      }
+      let lo = 0, hi = Math.min(k, h - 1);
       for (let y = 0; y < h; y++) {
-        const addY = Math.min(y + k, h - 1); const remY = Math.max(y - k - 1, 0);
-        const ta = (addY * w + x) * 3; sr += tmp[ta]; sg += tmp[ta+1]; sb += tmp[ta+2];
-        const tr = (remY * w + x) * 3; sr -= tmp[tr]; sg -= tmp[tr+1]; sb -= tmp[tr+2];
-        const cnt = addY - Math.max(y - k, 0) + 1;
+        const newHi = Math.min(y + k, h - 1);
+        while (hi < newHi) { hi++; const ti = (hi * w + x) * 3; sr += tmp[ti]; sg += tmp[ti+1]; sb += tmp[ti+2]; }
+        const newLo = Math.max(y - k, 0);
+        while (lo < newLo) { const ti = (lo * w + x) * 3; sr -= tmp[ti]; sg -= tmp[ti+1]; sb -= tmp[ti+2]; lo++; }
+        const cnt = hi - lo + 1;
         const faceA = mask[y * w + x];
         if (faceA >= 1) continue;
         const idx = (y * w + x) * 4;
-        d[idx]   = sr/cnt + (d[idx]   - sr/cnt) * faceA;
-        d[idx+1] = sg/cnt + (d[idx+1] - sg/cnt) * faceA;
-        d[idx+2] = sb/cnt + (d[idx+2] - sb/cnt) * faceA;
+        const blurR = sr/cnt, blurG = sg/cnt, blurB = sb/cnt;
+        d[idx]   = blurR + (d[idx]   - blurR) * faceA;
+        d[idx+1] = blurG + (d[idx+1] - blurG) * faceA;
+        d[idx+2] = blurB + (d[idx+2] - blurB) * faceA;
       }
     }
   } else if (filter === "face_beauty" && faceBoxes.length > 0) {
@@ -139,22 +154,27 @@ function applyLiveFilter(
       }
     }
   } else if (filter === "face_soft_blur" && faceBoxes.length > 0) {
-    // Soft blur on face area -- separable blur with ellipse mask, adjustable k
+    // Soft blur on face area -- separable blur with ellipse feathered mask
     const k = Math.max(1, Math.round(blurK));
     const tmp = new Float32Array(w * h * 3);
 
     // Horizontal pass (full image)
     for (let y = 0; y < h; y++) {
       let sr = 0, sg = 0, sb = 0;
-      for (let x2 = 0; x2 < k && x2 < w; x2++) { const p = (y * w + x2) * 4; sr += d[p]; sg += d[p+1]; sb += d[p+2]; }
+      for (let ix = 0; ix <= Math.min(k, w - 1); ix++) {
+        const p = (y * w + ix) * 4; sr += d[p]; sg += d[p+1]; sb += d[p+2];
+      }
+      let lo = 0, hi = Math.min(k, w - 1);
       for (let x = 0; x < w; x++) {
-        const addX = Math.min(x + k, w - 1); const remX = Math.max(x - k - 1, 0);
-        const pa = (y * w + addX) * 4; sr += d[pa]; sg += d[pa+1]; sb += d[pa+2];
-        const pr = (y * w + remX) * 4; sr -= d[pr]; sg -= d[pr+1]; sb -= d[pr+2];
-        const cnt = addX - Math.max(x - k, 0) + 1;
+        const newHi = Math.min(x + k, w - 1);
+        while (hi < newHi) { hi++; const p = (y * w + hi) * 4; sr += d[p]; sg += d[p+1]; sb += d[p+2]; }
+        const newLo = Math.max(x - k, 0);
+        while (lo < newLo) { const p = (y * w + lo) * 4; sr -= d[p]; sg -= d[p+1]; sb -= d[p+2]; lo++; }
+        const cnt = hi - lo + 1;
         const ti = (y * w + x) * 3; tmp[ti] = sr/cnt; tmp[ti+1] = sg/cnt; tmp[ti+2] = sb/cnt;
       }
     }
+
     // Vertical pass + apply only inside face ellipse
     for (const fb of faceBoxes) {
       const cx = fb.x + fb.w / 2, cy = fb.y + fb.h / 2;
@@ -166,14 +186,16 @@ function applyLiveFilter(
       const y1 = Math.min(h - 1, Math.ceil(cy + ry + 2));
       for (let px = x0; px <= x1; px++) {
         let sr = 0, sg = 0, sb = 0;
-        for (let py2 = Math.max(0, y0 - k); py2 <= Math.min(h-1, y0); py2++) {
-          const ti = (py2 * w + px) * 3; sr += tmp[ti]; sg += tmp[ti+1]; sb += tmp[ti+2];
+        for (let iy = Math.max(0, y0 - k); iy <= Math.min(h-1, y0); iy++) {
+          const ti = (iy * w + px) * 3; sr += tmp[ti]; sg += tmp[ti+1]; sb += tmp[ti+2];
         }
+        let lo = Math.max(0, y0 - k), hi = Math.min(h-1, y0);
         for (let py = y0; py <= y1; py++) {
-          const addY = Math.min(py + k, h - 1); const remY = Math.max(py - k - 1, 0);
-          const ta = (addY * w + px) * 3; sr += tmp[ta]; sg += tmp[ta+1]; sb += tmp[ta+2];
-          const tr = (remY * w + px) * 3; sr -= tmp[tr]; sg -= tmp[tr+1]; sb -= tmp[tr+2];
-          const cnt = addY - Math.max(py - k, 0) + 1;
+          const newHi = Math.min(py + k, h - 1);
+          while (hi < newHi) { hi++; const ti = (hi * w + px) * 3; sr += tmp[ti]; sg += tmp[ti+1]; sb += tmp[ti+2]; }
+          const newLo = Math.max(py - k, 0);
+          while (lo < newLo) { const ti = (lo * w + px) * 3; sr -= tmp[ti]; sg -= tmp[ti+1]; sb -= tmp[ti+2]; lo++; }
+          const cnt = hi - lo + 1;
           const dist = Math.sqrt(((px - cx) / rx) ** 2 + ((py - cy) / ry) ** 2);
           let alpha = 0;
           if (dist <= 1 - feather) { alpha = 1; }
