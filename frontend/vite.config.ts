@@ -4,10 +4,10 @@ import { defineConfig } from 'vite'
 
 // https://vite.dev/config/
 export default defineConfig({
-  base: '/PhotoboothPCKV/',
+  base: '/Photobooth-PCKV/',
   plugins: [react(), tailwindcss()],
   server: {
-    host: true, // mengizinkan akses dari jaringan lokal
-    allowedHosts: true, // mengizinkan tunnel seperti localtunnel, ngrok, dll.
+    host: true,
+    allowedHosts: true,
   },
 })
