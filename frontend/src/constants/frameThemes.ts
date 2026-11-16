@@ -32,7 +32,7 @@ export const FRAME_THEMES: FrameTheme[] = [
     type: "image",
     imageUrl: "frames/frame_y2k_chrome.jpg",
     color: "#18181B",
-    textColor: "#FFFFFF",
+    textColor: "#0F172A",
     badge: "✨ AI",
   },
   {
@@ -42,7 +42,7 @@ export const FRAME_THEMES: FrameTheme[] = [
     type: "image",
     imageUrl: "frames/frame_vintage_analog.jpg",
     color: "#111111",
-    textColor: "#FACC15",
+    textColor: "#1A1A1A",
     badge: "✨ AI",
   },
   {

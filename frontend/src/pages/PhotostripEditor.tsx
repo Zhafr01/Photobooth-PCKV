@@ -61,7 +61,7 @@ export default function PhotostripEditor() {
   const [showHeader, setShowHeader] = useState(true);
   const [headerText, setHeaderText] = useState("PHOTOBOOTH");
   const [headerFont, setHeaderFont] = useState(FONT_OPTIONS[3].family); // Playfair
-  const [headerSize, setHeaderSize] = useState(34);
+  const [headerSize, setHeaderSize] = useState(30);
 
   const [caption, setCaption] = useState(state.captionText || "");
   const [captionFont, setCaptionFont] = useState(FONT_OPTIONS[0].family); // Dancing Script
@@ -81,9 +81,9 @@ export default function PhotostripEditor() {
   const [offsetX, setOffsetX] = useState(state.photoOffsetX || 0);
   const [offsetY, setOffsetY] = useState(state.photoOffsetY || 0);
 
-  // Border thickness & layout controls ("bordernya ketebelan")
-  const [borderPad, setBorderPad] = useState<number>(18); // Default 18px (Sleek Korean Photobooth)
-  const [photoGap, setPhotoGap] = useState<number>(12); // Default 12px
+  // Border thickness & layout controls ("kurang pas ga si" -> golden ratio Life4Cuts standard)
+  const [borderPad, setBorderPad] = useState<number>(26); // Default 26px (Pas - Authentic Korean Photobooth)
+  const [photoGap, setPhotoGap] = useState<number>(14); // Default 14px
   const [photoRadius, setPhotoRadius] = useState<number>(8); // Default 8px
   const [showPhotoBorder, setShowPhotoBorder] = useState<boolean>(true); // Crisp card stroke
 
@@ -136,8 +136,9 @@ export default function PhotostripEditor() {
     let count = 4;
     let pad = borderPad;
 
-    const topH = showHeader ? 75 : 24;
-    const bottomH = caption || showDate ? 95 : 24;
+    const isMultiPhoto = layout === "strip4" || layout === "strip3";
+    const topH = showHeader ? (isMultiPhoto ? 100 : 120) : (isMultiPhoto ? 30 : 40);
+    const bottomH = caption || showDate ? (isMultiPhoto ? 140 : 160) : (isMultiPhoto ? 32 : 40);
 
     if (layout === "strip3") {
       canvasWidth = 600;
@@ -182,9 +183,22 @@ export default function PhotostripEditor() {
 
     // ── 1. Draw Frame Background ──
     if (selectedTheme.type === "image" && selectedTheme.imageUrl) {
-      // AI Illustrated Aesthetic Frame Background (Gemini)
+      // AI Illustrated Aesthetic Frame Background (Gemini) - Cover Crop (no distortion)
       const frameImg = await loadImg(`${import.meta.env.BASE_URL}${selectedTheme.imageUrl}`);
-      ctx.drawImage(frameImg, 0, 0, canvas.width, canvas.height);
+      const imgRatio = frameImg.naturalWidth / frameImg.naturalHeight;
+      const canvasRatio = canvas.width / canvas.height;
+      let sW = frameImg.naturalWidth;
+      let sH = frameImg.naturalHeight;
+      let sx = 0;
+      let sy = 0;
+      if (imgRatio > canvasRatio) {
+        sW = frameImg.naturalHeight * canvasRatio;
+        sx = (frameImg.naturalWidth - sW) / 2;
+      } else {
+        sH = frameImg.naturalWidth / canvasRatio;
+        sy = (frameImg.naturalHeight - sH) / 2;
+      }
+      ctx.drawImage(frameImg, sx, sy, sW, sH, 0, 0, canvas.width, canvas.height);
     } else if (selectedTheme.type === "film") {
       // Authentic 35mm film strip with sprocket holes
       ctx.fillStyle = "#121212";
@@ -280,11 +294,18 @@ export default function PhotostripEditor() {
 
     // ── 2. Draw Header (Custom Font) ──
     if (showHeader && headerText) {
+      ctx.save();
       ctx.fillStyle = resolvedTextColor;
       ctx.font = `bold ${headerSize}px ${headerFont}`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillText(headerText, canvas.width / 2, Math.round(topH / 2 + 8));
+      // Subtle contrast shadow so text remains legible on all textured backgrounds
+      ctx.shadowColor = resolvedTextColor === "#FFFFFF" ? "rgba(0,0,0,0.6)" : "rgba(255,255,255,0.7)";
+      ctx.shadowBlur = 4;
+      ctx.shadowOffsetX = 0;
+      ctx.shadowOffsetY = 1;
+      ctx.fillText(headerText, canvas.width / 2, Math.round(topH / 2));
+      ctx.restore();
     }
 
     // ── 3. Calculate Photo Dimensions (Sleek Korean Photobooth Math) ──
@@ -346,8 +367,10 @@ export default function PhotostripEditor() {
       const sHeight = baseH / zoom;
       const maxOffsetX = img.width - sWidth;
       const maxOffsetY = img.height - sHeight;
+      // Headroom-biased portrait crop (preserves hair and head, crops lower torso)
+      const defaultYOffset = maxOffsetY * 0.22;
       const sX = Math.max(0, Math.min(maxOffsetX, (img.width - sWidth) / 2 + (offsetX / 100) * (maxOffsetX / 2)));
-      const sY = Math.max(0, Math.min(maxOffsetY, (img.height - sHeight) / 2 + (offsetY / 100) * (maxOffsetY / 2)));
+      const sY = Math.max(0, Math.min(maxOffsetY, defaultYOffset + (offsetY / 100) * (maxOffsetY / 2)));
 
       ctx.drawImage(img, sX, sY, sWidth, sHeight, x, y, photoW, photoH);
       ctx.restore();
@@ -379,17 +402,23 @@ export default function PhotostripEditor() {
 
     // ── 6. Draw Footer: Caption & Date (Separate Mixed Fonts!) ──
     if (caption || showDate) {
-      const fy = canvas.height - Math.round(bottomH / 2);
+      const footerStartY = canvas.height - bottomH;
+      const fy = footerStartY + Math.round(bottomH / 2) - 6;
+      ctx.save();
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
+      ctx.shadowColor = resolvedTextColor === "#FFFFFF" ? "rgba(0,0,0,0.6)" : "rgba(255,255,255,0.7)";
+      ctx.shadowBlur = 4;
+      ctx.shadowOffsetX = 0;
+      ctx.shadowOffsetY = 1;
 
       if (caption && showDate) {
         ctx.fillStyle = resolvedTextColor;
         ctx.font = `bold ${captionSize}px ${captionFont}`;
-        ctx.fillText(caption, canvas.width / 2, fy - 11);
+        ctx.fillText(caption, canvas.width / 2, fy - 14);
 
         ctx.font = `${dateSize}px ${dateFont}`;
-        ctx.fillText(dateCustomText, canvas.width / 2, fy + 15);
+        ctx.fillText(dateCustomText, canvas.width / 2, fy + 14);
       } else if (caption) {
         ctx.fillStyle = resolvedTextColor;
         ctx.font = `bold ${captionSize}px ${captionFont}`;
@@ -399,6 +428,13 @@ export default function PhotostripEditor() {
         ctx.font = `${dateSize}px ${dateFont}`;
         ctx.fillText(dateCustomText, canvas.width / 2, fy);
       }
+
+      // Authentic Korean photobooth micro-stamp at the very bottom
+      ctx.font = `9px monospace`;
+      ctx.fillStyle = resolvedTextColor;
+      ctx.globalAlpha = 0.45;
+      ctx.fillText("✦ LIFE 4 CUTS • PCKV BOOTH ✦", canvas.width / 2, canvas.height - 14);
+      ctx.restore();
     }
 
     dispatch({
@@ -633,10 +669,10 @@ export default function PhotostripEditor() {
                 {/* Quick Presets */}
                 <div className="grid grid-cols-4 gap-1">
                   {[
-                    { label: "Tipis", pad: 14, gap: 8, rad: 6 },
-                    { label: "Korea", pad: 18, gap: 12, rad: 8 },
-                    { label: "Sedang", pad: 26, gap: 16, rad: 10 },
-                    { label: "Tebal", pad: 38, gap: 20, rad: 12 },
+                    { label: "Tipis", pad: 18, gap: 10, rad: 6 },
+                    { label: "Korea", pad: 26, gap: 14, rad: 8 },
+                    { label: "Sedang", pad: 32, gap: 18, rad: 10 },
+                    { label: "Tebal", pad: 40, gap: 22, rad: 12 },
                   ].map((preset) => (
                     <button
                       key={preset.label}
