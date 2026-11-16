@@ -61,15 +61,15 @@ export default function PhotostripEditor() {
   const [showHeader, setShowHeader] = useState(true);
   const [headerText, setHeaderText] = useState("PHOTOBOOTH");
   const [headerFont, setHeaderFont] = useState(FONT_OPTIONS[3].family); // Playfair
-  const [headerSize, setHeaderSize] = useState(30);
+  const [headerSize, setHeaderSize] = useState(36);
 
   const [caption, setCaption] = useState(state.captionText || "");
   const [captionFont, setCaptionFont] = useState(FONT_OPTIONS[0].family); // Dancing Script
-  const [captionSize, setCaptionSize] = useState(24);
+  const [captionSize, setCaptionSize] = useState(26);
 
   const [showDate, setShowDate] = useState(true);
   const [dateFont, setDateFont] = useState(FONT_OPTIONS[9].family); // Special Elite (Typewriter)
-  const [dateSize, setDateSize] = useState(16);
+  const [dateSize, setDateSize] = useState(20);
   const [dateCustomText, setDateCustomText] = useState(() =>
     new Date().toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" })
   );
@@ -134,11 +134,6 @@ export default function PhotostripEditor() {
     let canvasWidth = 600;
     let canvasHeight = 1800;
     let count = 4;
-    let pad = borderPad;
-
-    const isMultiPhoto = layout === "strip4" || layout === "strip3";
-    const topH = showHeader ? (isMultiPhoto ? 88 : 110) : (isMultiPhoto ? 20 : 28);
-    const bottomH = caption || showDate ? (isMultiPhoto ? 120 : 140) : (isMultiPhoto ? 20 : 28);
 
     if (layout === "strip3") {
       canvasWidth = 600;
@@ -148,16 +143,22 @@ export default function PhotostripEditor() {
       canvasWidth = 1200;
       canvasHeight = 1800;
       count = 4;
-      pad = Math.round(borderPad * 1.5);
     } else if (layout === "singleCard") {
       canvasWidth = 1200;
       canvasHeight = 1800;
       count = 1;
-      pad = Math.round(borderPad * 1.5);
     }
 
     canvas.width = canvasWidth;
     canvas.height = canvasHeight;
+
+    // Scale factor relative to standard 600px width (1.0 for strips, 2.0 for grid2x2/singleCard)
+    const scale = canvasWidth / 600;
+    const pad = Math.round(borderPad * scale);
+    const scaledGap = Math.round(photoGap * scale);
+
+    const topH = showHeader ? Math.round(96 * scale) : Math.round(24 * scale);
+    const bottomH = caption || showDate ? Math.round(130 * scale) : Math.round(28 * scale);
 
     const loadImg = (srcOrB64: string): Promise<HTMLImageElement> =>
       new Promise((res) => {
@@ -292,34 +293,46 @@ export default function PhotostripEditor() {
       resolvedTextColor = isDark ? "#FFFFFF" : "#1A1A1A";
     }
 
-    // ── 2. Draw Header (Custom Font) ──
+    // ── 2. Draw Header (Custom Font with contrast halo & layout scale) ──
     if (showHeader && headerText) {
+      const effectiveHeaderSize = Math.round(headerSize * scale);
       ctx.save();
-      ctx.fillStyle = resolvedTextColor;
-      ctx.font = `bold ${headerSize}px ${headerFont}`;
+      ctx.font = `bold ${effectiveHeaderSize}px ${headerFont}`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      // Subtle contrast shadow so text remains legible on all textured backgrounds
-      ctx.shadowColor = resolvedTextColor === "#FFFFFF" ? "rgba(0,0,0,0.6)" : "rgba(255,255,255,0.7)";
-      ctx.shadowBlur = 4;
+
+      const isLight = resolvedTextColor.toLowerCase() === "#ffffff" || resolvedTextColor.toLowerCase() === "#fff";
+      const hy = Math.round(topH / 2);
+
+      // Contrast halo / shadow so text is 100% visible on any background (chrome, dark, pastel)
+      ctx.shadowColor = isLight ? "rgba(0,0,0,0.85)" : "rgba(255,255,255,0.9)";
+      ctx.shadowBlur = Math.round(6 * scale);
       ctx.shadowOffsetX = 0;
-      ctx.shadowOffsetY = 1;
-      ctx.fillText(headerText, canvas.width / 2, Math.round(topH / 2));
+      ctx.shadowOffsetY = Math.round(1.5 * scale);
+
+      // Subtle stroke outline for guaranteed edge definition
+      ctx.lineWidth = Math.round(2.5 * scale);
+      ctx.strokeStyle = isLight ? "rgba(0,0,0,0.5)" : "rgba(255,255,255,0.7)";
+      ctx.strokeText(headerText, canvas.width / 2, hy);
+
+      // Main text fill
+      ctx.fillStyle = resolvedTextColor;
+      ctx.fillText(headerText, canvas.width / 2, hy);
       ctx.restore();
     }
 
-    // ── 3. Calculate Photo Dimensions (Sleek Korean Photobooth Math) ──
+    // ── 3. Calculate Photo Dimensions (Dynamic Grid Math) ──
     let photoW = canvas.width - pad * 2;
     let photoH = 390;
 
     if (layout === "strip4") {
-      const availH = canvas.height - topH - bottomH - 3 * photoGap;
+      const availH = canvas.height - topH - bottomH - 3 * scaledGap;
       photoH = Math.floor(availH / 4);
     } else if (layout === "strip3") {
-      const availH = canvas.height - topH - bottomH - 2 * photoGap;
+      const availH = canvas.height - topH - bottomH - 2 * scaledGap;
       photoH = Math.floor(availH / 3);
     } else if (layout === "grid2x2") {
-      const colGap = Math.round(photoGap * 1.3);
+      const colGap = Math.round(scaledGap * 1.2);
       photoW = Math.floor((canvas.width - pad * 2 - colGap) / 2);
       const availH = canvas.height - topH - bottomH - colGap;
       photoH = Math.floor(availH / 2);
@@ -334,10 +347,10 @@ export default function PhotostripEditor() {
 
     imgEls.forEach((img, i) => {
       let x = pad;
-      let y = topH + i * (photoH + photoGap);
+      let y = topH + i * (photoH + scaledGap);
 
       if (layout === "grid2x2") {
-        const colGap = Math.round(photoGap * 1.3);
+        const colGap = Math.round(scaledGap * 1.2);
         const col = i % 2;
         const row = Math.floor(i / 2);
         x = pad + col * (photoW + colGap);
@@ -349,7 +362,8 @@ export default function PhotostripEditor() {
 
       ctx.save();
       ctx.beginPath();
-      ctx.roundRect(x, y, photoW, photoH, photoRadius);
+      const effectiveRadius = Math.round(photoRadius * scale);
+      ctx.roundRect(x, y, photoW, photoH, effectiveRadius);
       ctx.clip();
 
       // Aspect-fill (cover crop) to preserve original aspect ratio without distortion
@@ -379,12 +393,12 @@ export default function PhotostripEditor() {
       if (showPhotoBorder) {
         ctx.save();
         ctx.beginPath();
-        ctx.roundRect(x, y, photoW, photoH, photoRadius);
+        ctx.roundRect(x, y, photoW, photoH, effectiveRadius);
         ctx.strokeStyle =
           selectedTheme.type === "image" || selectedTheme.color === "#18181B"
             ? "rgba(255, 255, 255, 0.4)"
             : "rgba(0, 0, 0, 0.12)";
-        ctx.lineWidth = 1;
+        ctx.lineWidth = Math.round(1 * scale);
         ctx.stroke();
         ctx.restore();
       }
@@ -392,7 +406,8 @@ export default function PhotostripEditor() {
 
     // ── 5. Draw Themed Stickers ──
     stickers.forEach((s) => {
-      ctx.font = `${s.size || 48}px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", serif`;
+      const effectiveStickerSize = Math.round((s.size || 48) * scale);
+      ctx.font = `${effectiveStickerSize}px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", serif`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       const sx = (s.x / 100) * canvas.width;
@@ -400,40 +415,60 @@ export default function PhotostripEditor() {
       ctx.fillText(s.emoji, sx, sy);
     });
 
-    // ── 6. Draw Footer: Caption & Date (Separate Mixed Fonts!) ──
+    // ── 6. Draw Footer: Caption & Date (Separate Mixed Fonts with contrast halo!) ──
     if (caption || showDate) {
       const footerStartY = canvas.height - bottomH;
-      const fy = footerStartY + Math.round(bottomH / 2) - 6;
+      const fy = footerStartY + Math.round(bottomH / 2) - Math.round(4 * scale);
+      const effectiveCaptionSize = Math.round(captionSize * scale);
+      const effectiveDateSize = Math.round(dateSize * scale);
+      const isLight = resolvedTextColor.toLowerCase() === "#ffffff" || resolvedTextColor.toLowerCase() === "#fff";
+
       ctx.save();
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.shadowColor = resolvedTextColor === "#FFFFFF" ? "rgba(0,0,0,0.6)" : "rgba(255,255,255,0.7)";
-      ctx.shadowBlur = 4;
+      ctx.shadowColor = isLight ? "rgba(0,0,0,0.85)" : "rgba(255,255,255,0.9)";
+      ctx.shadowBlur = Math.round(5 * scale);
       ctx.shadowOffsetX = 0;
-      ctx.shadowOffsetY = 1;
+      ctx.shadowOffsetY = Math.round(1.5 * scale);
 
       if (caption && showDate) {
+        // Caption
+        ctx.font = `bold ${effectiveCaptionSize}px ${captionFont}`;
+        ctx.lineWidth = Math.round(2 * scale);
+        ctx.strokeStyle = isLight ? "rgba(0,0,0,0.5)" : "rgba(255,255,255,0.7)";
+        ctx.strokeText(caption, canvas.width / 2, fy - Math.round(16 * scale));
         ctx.fillStyle = resolvedTextColor;
-        ctx.font = `bold ${captionSize}px ${captionFont}`;
-        ctx.fillText(caption, canvas.width / 2, fy - 14);
+        ctx.fillText(caption, canvas.width / 2, fy - Math.round(16 * scale));
 
-        ctx.font = `${dateSize}px ${dateFont}`;
-        ctx.fillText(dateCustomText, canvas.width / 2, fy + 14);
-      } else if (caption) {
+        // Date
+        ctx.font = `${effectiveDateSize}px ${dateFont}`;
+        ctx.lineWidth = Math.round(1.5 * scale);
+        ctx.strokeStyle = isLight ? "rgba(0,0,0,0.5)" : "rgba(255,255,255,0.7)";
+        ctx.strokeText(dateCustomText, canvas.width / 2, fy + Math.round(16 * scale));
         ctx.fillStyle = resolvedTextColor;
-        ctx.font = `bold ${captionSize}px ${captionFont}`;
+        ctx.fillText(dateCustomText, canvas.width / 2, fy + Math.round(16 * scale));
+      } else if (caption) {
+        ctx.font = `bold ${effectiveCaptionSize}px ${captionFont}`;
+        ctx.lineWidth = Math.round(2 * scale);
+        ctx.strokeStyle = isLight ? "rgba(0,0,0,0.5)" : "rgba(255,255,255,0.7)";
+        ctx.strokeText(caption, canvas.width / 2, fy);
+        ctx.fillStyle = resolvedTextColor;
         ctx.fillText(caption, canvas.width / 2, fy);
       } else if (showDate) {
+        ctx.font = `${effectiveDateSize}px ${dateFont}`;
+        ctx.lineWidth = Math.round(1.5 * scale);
+        ctx.strokeStyle = isLight ? "rgba(0,0,0,0.5)" : "rgba(255,255,255,0.7)";
+        ctx.strokeText(dateCustomText, canvas.width / 2, fy);
         ctx.fillStyle = resolvedTextColor;
-        ctx.font = `${dateSize}px ${dateFont}`;
         ctx.fillText(dateCustomText, canvas.width / 2, fy);
       }
 
       // Authentic Korean photobooth micro-stamp at the very bottom
-      ctx.font = `9px monospace`;
+      const microStampSize = Math.round(10 * scale);
+      ctx.font = `${microStampSize}px monospace`;
       ctx.fillStyle = resolvedTextColor;
-      ctx.globalAlpha = 0.45;
-      ctx.fillText("✦ LIFE 4 CUTS • PCKV BOOTH ✦", canvas.width / 2, canvas.height - 14);
+      ctx.globalAlpha = 0.55;
+      ctx.fillText("✦ LIFE 4 CUTS • PCKV BOOTH ✦", canvas.width / 2, canvas.height - Math.round(16 * scale));
       ctx.restore();
     }
 
@@ -1053,8 +1088,8 @@ export default function PhotostripEditor() {
                 </div>
                 <input
                   type="range"
-                  min="20"
-                  max="46"
+                  min="24"
+                  max="56"
                   step="2"
                   value={headerSize}
                   onChange={(e) => setHeaderSize(Number(e.target.value))}
@@ -1104,8 +1139,8 @@ export default function PhotostripEditor() {
             </div>
             <input
               type="range"
-              min="14"
-              max="34"
+              min="16"
+              max="44"
               step="2"
               value={captionSize}
               onChange={(e) => setCaptionSize(Number(e.target.value))}
@@ -1161,8 +1196,8 @@ export default function PhotostripEditor() {
                 </div>
                 <input
                   type="range"
-                  min="12"
-                  max="24"
+                  min="14"
+                  max="32"
                   step="1"
                   value={dateSize}
                   onChange={(e) => setDateSize(Number(e.target.value))}
