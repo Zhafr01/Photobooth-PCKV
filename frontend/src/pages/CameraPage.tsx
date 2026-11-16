@@ -24,7 +24,8 @@ function applyLiveFilter(
   w: number,
   h: number,
   filter: LiveFilter,
-  faceBoxes: FaceBox[] = []
+  faceBoxes: FaceBox[] = [],
+  blurK = 6   // blur radius (1–20), default 6
 ) {
   if (filter === "normal") return;
   const imgData = ctx.getImageData(0, 0, w, h);
@@ -61,24 +62,53 @@ function applyLiveFilter(
       }
     }
   } else if (filter === "face_blur_bg" && faceBoxes.length > 0) {
-    // Build face mask
-    const mask = new Uint8Array(w * h);
+    // Build ellipse face mask with feathered (soft) edges
+    // mask[i] = 0.0 (blur bg) … 1.0 (keep face sharp)
+    const mask = new Float32Array(w * h);
     for (const fb of faceBoxes) {
-      const pad = 30;
-      const x0 = Math.max(0, Math.floor(fb.x) - pad);
-      const y0 = Math.max(0, Math.floor(fb.y) - pad);
-      const x1 = Math.min(w - 1, Math.floor(fb.x + fb.w) + pad);
-      const y1 = Math.min(h - 1, Math.floor(fb.y + fb.h) + pad);
-      for (let y = y0; y <= y1; y++)
-        for (let x = x0; x <= x1; x++)
-          mask[y * w + x] = 1;
+      // Expand face box slightly to include hair/neck
+      const padX = fb.w * 0.20;
+      const padY = fb.h * 0.25;
+      const cx = fb.x + fb.w / 2;
+      const cy = fb.y + fb.h / 2;
+      const rx = fb.w / 2 + padX;   // ellipse x-radius
+      const ry = fb.h / 2 + padY;   // ellipse y-radius
+      const feather = 0.25;          // feather band: 25% of radius from edge inward
+
+      const x0 = Math.max(0, Math.floor(cx - rx - 2));
+      const y0 = Math.max(0, Math.floor(cy - ry - 2));
+      const x1 = Math.min(w - 1, Math.ceil(cx + rx + 2));
+      const y1 = Math.min(h - 1, Math.ceil(cy + ry + 2));
+
+      for (let py = y0; py <= y1; py++) {
+        for (let px = x0; px <= x1; px++) {
+          // Normalized distance from ellipse center (1.0 = on ellipse edge)
+          const nx = (px - cx) / rx;
+          const ny = (py - cy) / ry;
+          const dist = Math.sqrt(nx * nx + ny * ny);
+          // Smooth step: 0 outside, 1 inside, feathered at edge
+          let alpha = 0;
+          if (dist <= 1.0 - feather) {
+            alpha = 1;
+          } else if (dist < 1.0) {
+            // Smooth fade in feather band
+            const t = (1.0 - dist) / feather;
+            alpha = t * t * (3 - 2 * t); // smoothstep
+          }
+          const idx = py * w + px;
+          if (alpha > mask[idx]) mask[idx] = alpha;
+        }
+      }
     }
-    // Box blur background (k=4 for live preview performance; full blur applied on capture)
+
+    // Box blur background — apply blurK passes for stronger effect
     const copy = new Uint8ClampedArray(d);
-    const k = 4;
+    const k = Math.max(1, Math.round(blurK));
     for (let y = k; y < h - k; y++) {
       for (let x = k; x < w - k; x++) {
-        if (mask[y * w + x]) continue;
+        const faceAlpha = mask[y * w + x];
+        if (faceAlpha >= 1) continue; // fully inside face — skip
+
         let r = 0, g = 0, b = 0, cnt = 0;
         for (let dy = -k; dy <= k; dy++) {
           for (let dx = -k; dx <= k; dx++) {
@@ -87,7 +117,11 @@ function applyLiveFilter(
           }
         }
         const idx = (y * w + x) * 4;
-        d[idx] = r / cnt; d[idx + 1] = g / cnt; d[idx + 2] = b / cnt;
+        const blurR = r / cnt, blurG = g / cnt, blurB = b / cnt;
+        // Blend: face area keeps original, bg gets blur
+        d[idx]     = blurR + (copy[idx]     - blurR) * faceAlpha;
+        d[idx + 1] = blurG + (copy[idx + 1] - blurG) * faceAlpha;
+        d[idx + 2] = blurB + (copy[idx + 2] - blurB) * faceAlpha;
       }
     }
   } else if (filter === "face_beauty" && faceBoxes.length > 0) {
@@ -248,6 +282,8 @@ export default function CameraPage() {
   const [phoneQrUrl, setPhoneQrUrl] = useState<string>("");
 
   const [liveFilter, setLiveFilter] = useState<LiveFilter>("normal");
+  const [blurStrength, setBlurStrength] = useState(6); // 1–20, default 6
+  const blurStrengthRef = useRef(6);
   const [mode, setMode] = useState<Mode>("burst4");
   const [countdownSecs, setCountdownSecs] = useState(3);
   const [countdown, setCountdown] = useState<number | null>(null);
@@ -270,6 +306,7 @@ export default function CameraPage() {
   // Keep mutable refs in sync with state (avoid stale closures in RAF)
   useEffect(() => { isMirroredRef.current = isMirrored; }, [isMirrored]);
   useEffect(() => { liveFilterRef.current = liveFilter; }, [liveFilter]);
+  useEffect(() => { blurStrengthRef.current = blurStrength; }, [blurStrength]);
 
   /* ── Face Tracker Init & RAF Loop ── */
   useEffect(() => {
@@ -376,7 +413,7 @@ export default function CameraPage() {
       .filter(fb => fb.x + fb.w > 0 && fb.y + fb.h > 0 && fb.x < dw && fb.y < dh);
 
     // Apply filter every frame (no throttle = no flicker)
-    applyLiveFilter(ctx, dw, dh, currentFilter, scaledBoxes);
+    applyLiveFilter(ctx, dw, dh, currentFilter, scaledBoxes, blurStrengthRef.current);
   }, []);
 
 
@@ -1272,6 +1309,29 @@ export default function CameraPage() {
                   ))}
                 </div>
                 {FACE_FILTERS.includes(liveFilter) && <p className="text-[10px] text-green-600/80 mt-2 font-mono">🤖 AI Face Aktif — scan wajah berjalan</p>}
+
+                {/* Blur strength slider — only shown for blur bg filter */}
+                {liveFilter === "face_blur_bg" && (
+                  <div className="mt-3 bg-white/5 border border-white/10 rounded-xl p-3">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-xs text-gray-300 font-semibold">🫧 Kekuatan Blur</span>
+                      <span className="text-xs font-mono text-green-400 w-6 text-right">{blurStrength}</span>
+                    </div>
+                    <input
+                      type="range"
+                      min={1}
+                      max={20}
+                      step={1}
+                      value={blurStrength}
+                      onChange={(e) => setBlurStrength(Number(e.target.value))}
+                      className="w-full h-1.5 rounded-full accent-green-500 cursor-pointer"
+                    />
+                    <div className="flex justify-between text-[10px] text-gray-600 mt-1">
+                      <span>Halus</span>
+                      <span>Kuat</span>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* ── Face Tracker Section ── */}
