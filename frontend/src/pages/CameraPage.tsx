@@ -738,8 +738,16 @@ export default function CameraPage() {
     ctx.drawImage(video, -rawW / 2, -rawH / 2, rawW, rawH);
     ctx.restore();
 
-    // Apply live filter (including face filters using current faceBoxes)
-    applyLiveFilter(ctx, canvas.width, canvas.height, liveFilter, faceBoxesRef.current);
+    // Transform faceBoxes from video-pixel coords → capture canvas coords
+    // Canvas is outW×outH = rawW×rawH (full res), so scale = 1:1 but mirroring may flip X
+    const captureFaceBoxes: FaceBox[] = faceBoxesRef.current.map(fb => {
+      let bx = fb.x;
+      if (isMirrored) bx = rawW - fb.x - fb.w; // flip X when mirrored
+      return { x: bx, y: fb.y, w: fb.w, h: fb.h };
+    });
+
+    // Apply live filter (including face filters using transformed faceBoxes)
+    applyLiveFilter(ctx, canvas.width, canvas.height, liveFilter, captureFaceBoxes);
 
     const b64 = canvas.toDataURL("image/png", 1.0).split(",")[1];
     setFlash(true);
@@ -815,7 +823,12 @@ export default function CameraPage() {
                 if (isMirrored) ctx.scale(-1, 1);
                 ctx.drawImage(video, -rawW / 2, -rawH / 2, rawW, rawH);
                 ctx.restore();
-                applyLiveFilter(ctx, canvas.width, canvas.height, liveFilter, faceBoxesRef.current);
+                const captureFaceBoxesQ: FaceBox[] = faceBoxesRef.current.map(fb => {
+                  let bx = fb.x;
+                  if (isMirrored) bx = rawW - fb.x - fb.w;
+                  return { x: bx, y: fb.y, w: fb.w, h: fb.h };
+                });
+                applyLiveFilter(ctx, canvas.width, canvas.height, liveFilter, captureFaceBoxesQ);
                 const b64 = canvas.toDataURL("image/png", 1.0).split(",")[1];
                 quickPhotos.push(b64);
                 setFlash(true);
