@@ -194,6 +194,7 @@ export default function CameraPage() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
+  const liveRenderCanvasRef = useRef<HTMLCanvasElement>(null); // live face filter preview
   const localStreamRef = useRef<MediaStream | null>(null);
   const remoteStreamRef = useRef<MediaStream | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -201,6 +202,9 @@ export default function CameraPage() {
   const peerRef = useRef<Peer | null>(null);
   const rafRef = useRef<number | null>(null);
   const faceBoxesRef = useRef<FaceBox[]>([]);
+  // Mutable refs so the RAF loop always reads latest values without stale closure
+  const isMirroredRef = useRef(true);
+  const liveFilterRef = useRef<LiveFilter>("normal");
 
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>(
@@ -239,15 +243,20 @@ export default function CameraPage() {
   // Face tracker auto-activates when any face filter selected OR manual overlay ON
   const needsFaceTracker = FACE_FILTERS.includes(liveFilter) || showFaceOverlay;
 
-  /* ── Face Tracker Init & RAF Loop (auto-draw overlay + live render) ── */
+  // Keep mutable refs in sync with state (avoid stale closures in RAF)
+  useEffect(() => { isMirroredRef.current = isMirrored; }, [isMirrored]);
+  useEffect(() => { liveFilterRef.current = liveFilter; }, [liveFilter]);
+
+  /* ── Face Tracker Init & RAF Loop ── */
   useEffect(() => {
     if (!needsFaceTracker) {
       if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
       setFaceBoxes([]);
       faceBoxesRef.current = [];
-      // Clear canvases
       const oc = overlayCanvasRef.current;
-      if (oc) { const c = oc.getContext("2d"); c?.clearRect(0, 0, oc.width, oc.height); }
+      if (oc) oc.getContext("2d")?.clearRect(0, 0, oc.width, oc.height);
+      const rc = liveRenderCanvasRef.current;
+      if (rc) rc.getContext("2d")?.clearRect(0, 0, rc.width, rc.height);
       return;
     }
 
@@ -270,13 +279,15 @@ export default function CameraPage() {
         frame++;
         const video = videoRef.current;
         if (video && !video.paused && video.videoWidth > 0) {
-          // Detect faces every other frame for performance
-          if (frame % 2 === 0) {
+          // 1. Detect faces every 3rd frame for performance
+          if (frame % 3 === 0) {
             const boxes = faceTracker.detect(video);
             faceBoxesRef.current = boxes;
             setFaceBoxes(boxes);
           }
-          // Draw scan overlay every frame
+          // 2. Render live face filter to canvas (every frame)
+          drawLiveFilter(video);
+          // 3. Draw scan overlay on top (every frame)
           drawScanOverlay(frame);
         }
         rafRef.current = requestAnimationFrame(loop);
@@ -290,6 +301,49 @@ export default function CameraPage() {
       if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
     };
   }, [needsFaceTracker]); // eslint-disable-line
+
+  /* ── Live filter render: draws video + face filter to visible canvas ── */
+  const drawLiveFilter = useCallback((video: HTMLVideoElement) => {
+    const canvas = liveRenderCanvasRef.current;
+    if (!canvas) return;
+
+    const dw = video.clientWidth;
+    const dh = video.clientHeight;
+    if (dw === 0 || dh === 0) return;
+
+    if (canvas.width !== dw || canvas.height !== dh) {
+      canvas.width = dw;
+      canvas.height = dh;
+    }
+
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    if (!ctx) return;
+
+    // Draw video frame (apply mirror transform)
+    ctx.save();
+    if (isMirroredRef.current) {
+      ctx.translate(dw, 0);
+      ctx.scale(-1, 1);
+    }
+    ctx.drawImage(video, 0, 0, dw, dh);
+    ctx.restore();
+
+    // Scale faceBoxes from video-space → display-space
+    const vw = video.videoWidth;
+    const vh = video.videoHeight;
+    const sx = dw / vw;
+    const sy = dh / vh;
+    const scaledBoxes: FaceBox[] = faceBoxesRef.current.map(fb => ({
+      x: fb.x * sx,
+      y: fb.y * sy,
+      w: fb.w * sx,
+      h: fb.h * sy,
+    }));
+
+    // Apply face filter at display resolution
+    applyLiveFilter(ctx, dw, dh, liveFilterRef.current, scaledBoxes);
+  }, []);
+
 
   /* ── Draw animated scan overlay on canvas ── */
   const drawScanOverlay = useCallback((frame: number) => {
@@ -785,7 +839,7 @@ export default function CameraPage() {
       className="relative w-full bg-black overflow-hidden"
       style={{ height: "calc(100vh - 56px)" }}
     >
-      {/* ── Video Viewfinder ── */}
+      {/* ── Video Viewfinder (hidden visually when face filter active, still needed for MediaPipe) ── */}
       <video
         ref={videoRef}
         playsInline
@@ -796,6 +850,22 @@ export default function CameraPage() {
           ...viewportStyle,
           objectFit: fitMode === "cover" ? "cover" : "contain",
           filter: videoCssFilter,
+          // When face filter active: hide video visually, show render canvas instead
+          opacity: FACE_FILTERS.includes(liveFilter) ? 0 : 1,
+          pointerEvents: "none",
+        }}
+      />
+
+      {/* ── Live Face Filter Render Canvas (replaces video when face filter active) ── */}
+      <canvas
+        ref={liveRenderCanvasRef}
+        className="absolute top-1/2 left-1/2 pointer-events-none"
+        style={{
+          ...viewportStyle,
+          objectFit: fitMode === "cover" ? "cover" : "contain",
+          opacity: FACE_FILTERS.includes(liveFilter) ? 1 : 0,
+          transition: "opacity 0.2s",
+          zIndex: 8,
         }}
       />
 
