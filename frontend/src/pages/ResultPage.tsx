@@ -67,28 +67,42 @@ export default function ResultPage() {
     }
   }, [photos, gifUrl, dispatch]);
 
-  // 2. Generate QR Code for Phone Download — save to localStorage, QR → /download?key=XXXX
+  // 2. Upload photostrip to backend → generate QR Code pointing to download URL
   useEffect(() => {
     if (!result) return;
-    // Generate a short unique key for this session
-    const key = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-    const payload: { photostrip?: string; gif?: string } = { photostrip: result };
-    if (gifUrl) payload.gif = gifUrl;
-    try {
-      localStorage.setItem(`pckv_download_${key}`, JSON.stringify(payload));
-    } catch {
-      // localStorage full — clear old pckv keys
-      Object.keys(localStorage)
-        .filter((k) => k.startsWith("pckv_download_"))
-        .forEach((k) => localStorage.removeItem(k));
-      try { localStorage.setItem(`pckv_download_${key}`, JSON.stringify(payload)); } catch { /* ignore */ }
-    }
-    // Build the download URL — works on same LAN via GitHub Pages
-    const baseUrl = `${window.location.origin}${window.location.pathname}`;
-    const downloadUrl = `${baseUrl}#/download?key=${key}`;
-    QRCode.toDataURL(downloadUrl, { margin: 1, width: 240 })
-      .then((url) => setQrCodeDataUrl(url))
-      .catch(console.error);
+
+    const API_URL = (import.meta.env.VITE_API_URL || "http://localhost:8000").replace(/\/$/, "");
+
+    const doUpload = async () => {
+      try {
+        const body: { image: string; gif?: string } = { image: result };
+        if (gifUrl) body.gif = gifUrl;
+
+        const res = await fetch(`${API_URL}/api/upload`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(15000),
+        });
+
+        if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
+        const data = await res.json() as { key: string };
+        const downloadUrl = `${API_URL}/api/download/${data.key}`;
+
+        QRCode.toDataURL(downloadUrl, { margin: 1, width: 240 })
+          .then((url) => setQrCodeDataUrl(url))
+          .catch(console.error);
+      } catch (err) {
+        console.warn("Upload to backend failed, QR tidak tersedia:", err);
+        // Fallback: QR arahkan ke halaman result (tidak bisa download tapi setidaknya ada QR)
+        const baseUrl = `${window.location.origin}${window.location.pathname}`;
+        QRCode.toDataURL(`${baseUrl}#/result`, { margin: 1, width: 240 })
+          .then((url) => setQrCodeDataUrl(url))
+          .catch(console.error);
+      }
+    };
+
+    doUpload();
   }, [result, gifUrl]);
 
   const handleDownloadPNG = () => {

@@ -1,40 +1,38 @@
 /**
  * DownloadPage — halaman yang dibuka HP saat scan QR Code
- * URL: /#/download?key=XXXX
- * Membaca data photostrip dari localStorage, lalu langsung trigger download ke galeri HP.
+ * QR mengarah ke backend: https://photobooth-pckv-backend.onrender.com/api/download/KEY
+ * HP langsung download file dari Render backend (tersedia via internet)
  */
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Download, CheckCircle, AlertCircle, Loader } from "lucide-react";
 
+const API_URL = (import.meta.env.VITE_API_URL || "http://localhost:8000").replace(/\/$/, "");
+
 export default function DownloadPage() {
   const [params] = useSearchParams();
   const key = params.get("key");
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
-  const [imgSrc, setImgSrc] = useState<string>("");
-  const [gifSrc, setGifSrc] = useState<string>("");
+  const [hasGif, setHasGif] = useState(false);
 
   useEffect(() => {
     if (!key) { setStatus("error"); return; }
-    try {
-      const stored = localStorage.getItem(`pckv_download_${key}`);
-      if (!stored) { setStatus("error"); return; }
-      const data = JSON.parse(stored) as { photostrip?: string; gif?: string };
-      if (data.photostrip) setImgSrc(`data:image/png;base64,${data.photostrip}`);
-      if (data.gif) setGifSrc(data.gif);
-      setStatus("ready");
-    } catch {
-      setStatus("error");
-    }
+    // Check if key exists on backend
+    fetch(`${API_URL}/api/download/${key}/info`)
+      .then((r) => {
+        if (!r.ok) throw new Error("Not found");
+        return r.json() as Promise<{ has_png: boolean; has_gif: boolean }>;
+      })
+      .then((info) => {
+        setHasGif(info.has_gif);
+        setStatus("ready");
+      })
+      .catch(() => setStatus("error"));
   }, [key]);
 
-  const downloadFile = (src: string, filename: string) => {
-    const a = document.createElement("a");
-    a.href = src;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+  const downloadFile = (fmt: "png" | "gif") => {
+    // Redirect to backend download URL — mobile browser triggers Save to Gallery
+    window.location.href = `${API_URL}/api/download/${key}?fmt=${fmt}`;
   };
 
   return (
@@ -47,7 +45,7 @@ export default function DownloadPage() {
       {status === "loading" && (
         <div className="flex items-center gap-2 text-gray-500">
           <Loader size={20} className="animate-spin" />
-          <span>Memuat foto...</span>
+          <span>Menghubungi server...</span>
         </div>
       )}
 
@@ -56,7 +54,7 @@ export default function DownloadPage() {
           <AlertCircle size={32} className="text-red-500 mx-auto mb-3" />
           <p className="text-red-700 font-semibold">Foto tidak ditemukan</p>
           <p className="text-red-500 text-sm mt-1">
-            Link sudah kedaluwarsa atau tidak valid.<br />
+            Link sudah kedaluwarsa atau server sedang restart.<br />
             Minta QR Code baru dari PC.
           </p>
         </div>
@@ -64,38 +62,32 @@ export default function DownloadPage() {
 
       {status === "ready" && (
         <div className="flex flex-col items-center gap-4 w-full max-w-sm">
-          <div className="bg-white rounded-2xl shadow-md p-4 border border-gray-100 w-full">
-            <CheckCircle size={20} className="text-green-500 mb-2" />
-            <p className="text-xs text-gray-500 mb-3">Tap tombol di bawah untuk menyimpan ke galeri HP</p>
+          <div className="bg-white rounded-2xl shadow-md p-6 border border-gray-100 w-full">
+            <CheckCircle size={24} className="text-green-500 mb-3" />
+            <p className="text-sm text-gray-600 font-semibold mb-4">
+              Foto siap diunduh! Tap tombol di bawah.
+            </p>
 
-            {imgSrc && (
-              <div className="mb-4">
-                <img src={imgSrc} alt="Photostrip" className="w-full rounded-xl mb-2 shadow-sm" />
-                <button
-                  onClick={() => downloadFile(imgSrc, `pckv-photostrip-${Date.now()}.png`)}
-                  className="w-full py-3 bg-rose-600 text-white rounded-xl font-semibold flex items-center justify-center gap-2 hover:bg-rose-700 transition-colors"
-                >
-                  <Download size={18} /> Unduh Photostrip (PNG)
-                </button>
-              </div>
-            )}
+            <button
+              onClick={() => downloadFile("png")}
+              className="w-full py-3 bg-rose-600 text-white rounded-xl font-semibold flex items-center justify-center gap-2 hover:bg-rose-700 transition-colors mb-3"
+            >
+              <Download size={18} /> Unduh Photostrip (PNG)
+            </button>
 
-            {gifSrc && (
-              <div>
-                <img src={gifSrc} alt="GIF Boomerang" className="w-full rounded-xl mb-2 shadow-sm" />
-                <button
-                  onClick={() => downloadFile(gifSrc, `pckv-boomerang-${Date.now()}.gif`)}
-                  className="w-full py-3 bg-purple-600 text-white rounded-xl font-semibold flex items-center justify-center gap-2 hover:bg-purple-700 transition-colors"
-                >
-                  <Download size={18} /> Unduh GIF Boomerang
-                </button>
-              </div>
+            {hasGif && (
+              <button
+                onClick={() => downloadFile("gif")}
+                className="w-full py-3 bg-purple-600 text-white rounded-xl font-semibold flex items-center justify-center gap-2 hover:bg-purple-700 transition-colors"
+              >
+                <Download size={18} /> Unduh GIF Boomerang
+              </button>
             )}
           </div>
 
           <p className="text-xs text-gray-400 text-center">
-            File disimpan sementara di browser PC ini.<br />
-            Hanya bisa diakses dari jaringan WiFi yang sama.
+            File disimpan sementara di server (± 1 jam).<br />
+            Scan ulang QR di PC jika link kedaluwarsa.
           </p>
         </div>
       )}

@@ -5,11 +5,13 @@ FastAPI entry point for Photobooth Digital PCKV backend.
 import io
 import base64
 import time
+import uuid
 from typing import Any, Dict, List, Optional
 
 import numpy as np
 from PIL import Image
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -27,6 +29,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ---------------------------------------------------------------------------
+# In-memory upload store (key → PNG bytes) — survives until server restart
+# Render free tier restarts occasionally, so this is intentionally ephemeral.
+# Max ~50 entries to avoid OOM (each photostrip ~500KB–2MB)
+# ---------------------------------------------------------------------------
+_UPLOAD_STORE: Dict[str, bytes] = {}
+_UPLOAD_MAX = 50
 
 # ---------------------------------------------------------------------------
 # Filter registry
@@ -201,3 +211,68 @@ def analysis(req: AnalysisRequest):
         "histogram": hist,
         "spectrum_image": spectrum_b64,
     }
+
+
+# ---------------------------------------------------------------------------
+# Upload / Download endpoints — for QR code phone download feature
+# ---------------------------------------------------------------------------
+class UploadRequest(BaseModel):
+    image: str                   # base64 PNG (photostrip)
+    gif: Optional[str] = None   # base64 GIF boomerang (optional)
+
+
+@app.post("/api/upload")
+def upload_photo(req: UploadRequest):
+    """Store a photostrip (and optional GIF) temporarily, return a download key."""
+    global _UPLOAD_STORE
+    # Evict oldest entry if store is full
+    if len(_UPLOAD_STORE) >= _UPLOAD_MAX:
+        oldest_key = next(iter(_UPLOAD_STORE))
+        del _UPLOAD_STORE[oldest_key]
+
+    key = uuid.uuid4().hex[:12]
+    try:
+        png_bytes = base64.b64decode(req.image.split(",")[-1])
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid image: {e}")
+
+    gif_bytes: Optional[bytes] = None
+    if req.gif:
+        try:
+            gif_b64 = req.gif.split(",")[-1] if "," in req.gif else req.gif
+            gif_bytes = base64.b64decode(gif_b64)
+        except Exception:
+            gif_bytes = None
+
+    _UPLOAD_STORE[key] = {"png": png_bytes, "gif": gif_bytes}
+    return {"key": key}
+
+
+@app.get("/api/download/{key}")
+def download_photo(key: str, fmt: str = "png"):
+    """Serve stored photostrip or GIF by key."""
+    from fastapi.responses import Response
+    entry = _UPLOAD_STORE.get(key)
+    if not entry:
+        raise HTTPException(status_code=404, detail="File tidak ditemukan atau sudah kedaluwarsa")
+
+    if fmt == "gif" and entry.get("gif"):
+        return Response(
+            content=entry["gif"],
+            media_type="image/gif",
+            headers={"Content-Disposition": f'attachment; filename="pckv-boomerang-{key}.gif"'},
+        )
+    return Response(
+        content=entry["png"],
+        media_type="image/png",
+        headers={"Content-Disposition": f'attachment; filename="pckv-photostrip-{key}.png"'},
+    )
+
+
+@app.get("/api/download/{key}/info")
+def download_info(key: str):
+    """Check if a key exists and what files are available."""
+    entry = _UPLOAD_STORE.get(key)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Not found")
+    return {"has_png": bool(entry.get("png")), "has_gif": bool(entry.get("gif"))}
