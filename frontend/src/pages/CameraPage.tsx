@@ -14,10 +14,10 @@ import { faceTracker, type FaceBox } from "../services/faceTracker";
 
 type LiveFilter =
   | "normal" | "bw" | "vintage" | "dreamy" | "vignette"
-  | "face_blur_bg" | "face_beauty" | "face_funny" | "face_spotlight";
+  | "face_blur_bg" | "face_soft_blur" | "face_beauty" | "face_funny" | "face_spotlight";
 type Mode = "single" | "burst3" | "burst4" | "quick";
 
-const FACE_FILTERS: LiveFilter[] = ["face_blur_bg", "face_beauty", "face_funny", "face_spotlight"];
+const FACE_FILTERS: LiveFilter[] = ["face_blur_bg", "face_soft_blur", "face_beauty", "face_funny", "face_spotlight"];
 
 function applyLiveFilter(
   ctx: CanvasRenderingContext2D,
@@ -91,6 +91,30 @@ function applyLiveFilter(
       }
     }
   } else if (filter === "face_beauty" && faceBoxes.length > 0) {
+    // Beauty: skin tone warmth + brightness boost + subtle contrast (NO blur)
+    for (const fb of faceBoxes) {
+      const pad = 10;
+      const x0 = Math.max(0, Math.floor(fb.x) - pad);
+      const y0 = Math.max(0, Math.floor(fb.y) - pad);
+      const x1 = Math.min(w - 1, Math.floor(fb.x + fb.w) + pad);
+      const y1 = Math.min(h - 1, Math.floor(fb.y + fb.h) + pad);
+      for (let y = y0; y <= y1; y++) {
+        for (let x = x0; x <= x1; x++) {
+          const idx = (y * w + x) * 4;
+          // Warm skin tone: boost red slightly, lift shadows, increase saturation
+          const r = d[idx], g = d[idx + 1], b = d[idx + 2];
+          const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+          // Lift shadows (soft light blend)
+          const lift = (v: number) => Math.min(255, v + (255 - v) * 0.08);
+          // Warm: +red +green slightly, -blue slightly
+          d[idx]     = Math.min(255, lift(r) * 1.06 + lum * 0.02);
+          d[idx + 1] = Math.min(255, lift(g) * 1.02);
+          d[idx + 2] = Math.min(255, lift(b) * 0.95);
+        }
+      }
+    }
+  } else if (filter === "face_soft_blur" && faceBoxes.length > 0) {
+    // Soft Blur: gentle box blur only on the face area (original beauty blur, kept as new filter)
     const copy = new Uint8ClampedArray(d);
     const k = 3;
     for (const fb of faceBoxes) {
@@ -108,10 +132,9 @@ function applyLiveFilter(
             }
           }
           const idx = (y * w + x) * 4;
-          // Smooth + slightly brighten
-          d[idx] = Math.min(255, r / cnt * 1.07);
-          d[idx + 1] = Math.min(255, g / cnt * 1.07);
-          d[idx + 2] = Math.min(255, b / cnt * 1.07);
+          d[idx] = r / cnt;
+          d[idx + 1] = g / cnt;
+          d[idx + 2] = b / cnt;
         }
       }
     }
@@ -174,15 +197,16 @@ function applyLiveFilter(
 }
 
 const LIVE_FILTERS: { id: LiveFilter; label: string; emoji: string }[] = [
-  { id: "normal",          label: "Normal",    emoji: "○" },
-  { id: "bw",              label: "B&W",       emoji: "◑" },
-  { id: "vintage",         label: "Vintage",   emoji: "🎞" },
-  { id: "dreamy",          label: "Dreamy",    emoji: "🌸" },
-  { id: "vignette",        label: "Vignette",  emoji: "◉" },
-  { id: "face_spotlight",  label: "Spotlight", emoji: "🔦" },
-  { id: "face_blur_bg",    label: "Blur BG",   emoji: "🫧" },
-  { id: "face_beauty",     label: "Beauty",    emoji: "✨" },
-  { id: "face_funny",      label: "Funny",     emoji: "🤡" },
+  { id: "normal",         label: "Normal",     emoji: "○" },
+  { id: "bw",             label: "B&W",        emoji: "◑" },
+  { id: "vintage",        label: "Vintage",    emoji: "🎞" },
+  { id: "dreamy",         label: "Dreamy",     emoji: "🌸" },
+  { id: "vignette",       label: "Vignette",   emoji: "◉" },
+  { id: "face_spotlight", label: "Spotlight",  emoji: "🔦" },
+  { id: "face_blur_bg",   label: "Blur BG",    emoji: "🫧" },
+  { id: "face_beauty",    label: "Beauty",     emoji: "✨" },
+  { id: "face_soft_blur", label: "Soft Blur",  emoji: "🌫" },
+  { id: "face_funny",     label: "Funny",      emoji: "🤡" },
 ];
 
 const COUNTDOWN_OPTIONS = [3, 5, 10];
@@ -205,7 +229,6 @@ export default function CameraPage() {
   // Mutable refs so the RAF loop always reads latest values without stale closure
   const isMirroredRef = useRef(true);
   const liveFilterRef = useRef<LiveFilter>("normal");
-  const renderFrameRef = useRef(0); // for frame-throttle performance
 
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>(
@@ -308,10 +331,7 @@ export default function CameraPage() {
     const canvas = liveRenderCanvasRef.current;
     if (!canvas) return;
 
-    renderFrameRef.current++;
-    const frameNum = renderFrameRef.current;
-
-    // Use HALF display resolution → 4× fewer pixels, CSS scales it up
+    // Half display resolution → 4× fewer pixels, CSS scales it up (no flicker, no throttle)
     const dw = Math.max(1, Math.round(video.clientWidth / 2));
     const dh = Math.max(1, Math.round(video.clientHeight / 2));
     if (dw === 0 || dh === 0) return;
@@ -328,10 +348,7 @@ export default function CameraPage() {
     ctx.drawImage(video, 0, 0, dw, dh);
 
     const currentFilter = liveFilterRef.current;
-
-    // For heavy pixel filters, only process every 2nd frame → 2× less CPU
-    const isHeavyFilter = currentFilter === "face_blur_bg" || currentFilter === "face_spotlight" || currentFilter === "face_funny";
-    if (isHeavyFilter && frameNum % 2 !== 0) return;
+    if (currentFilter === "normal") return;
 
     // Scale faceBoxes from video-space → half-display-space
     const vw = video.videoWidth || dw * 2;
@@ -345,7 +362,7 @@ export default function CameraPage() {
       h: fb.h * sy,
     }));
 
-    // Apply face filter
+    // Apply filter every frame (no throttle = no flicker)
     applyLiveFilter(ctx, dw, dh, currentFilter, scaledBoxes);
   }, []);
 
@@ -1122,6 +1139,59 @@ export default function CameraPage() {
               </div>
             </div>
 
+            {/* ── Filter Section ── */}
+            <div>
+              <p className="flex items-center gap-1.5 text-xs text-gray-300 font-semibold uppercase tracking-wider mb-2">
+                <SlidersHorizontal size={13} className="text-rose-500" /> Filter Kamera
+              </p>
+
+              {/* Normal / Warna filters */}
+              <p className="text-[10px] text-gray-500 uppercase tracking-wider mb-1.5 font-mono">Warna & Efek</p>
+              <div className="grid grid-cols-2 gap-1.5 mb-3">
+                {LIVE_FILTERS.filter(f => !FACE_FILTERS.includes(f.id)).map((f) => (
+                  <button
+                    key={f.id}
+                    onClick={() => setLiveFilter(f.id)}
+                    className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium transition-all ${
+                      liveFilter === f.id
+                        ? "bg-rose-600 text-white shadow-sm"
+                        : "bg-white/10 text-gray-300 hover:bg-white/20"
+                    }`}
+                  >
+                    <span className="text-sm">{f.emoji}</span>
+                    <span>{f.label}</span>
+                  </button>
+                ))}
+              </div>
+
+              {/* AI Face filters */}
+              <p className="text-[10px] text-gray-500 uppercase tracking-wider mb-1.5 font-mono flex items-center gap-1">
+                🤖 AI Face Filter
+              </p>
+              <div className="grid grid-cols-2 gap-1.5">
+                {LIVE_FILTERS.filter(f => FACE_FILTERS.includes(f.id)).map((f) => (
+                  <button
+                    key={f.id}
+                    onClick={() => setLiveFilter(f.id)}
+                    className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium transition-all border ${
+                      liveFilter === f.id
+                        ? "bg-green-600 text-white shadow-sm border-green-400/50"
+                        : "bg-white/5 text-green-300 hover:bg-green-900/40 border-green-800/40"
+                    }`}
+                    title={`${f.label} — AI Face Filter`}
+                  >
+                    <span className="text-sm">{f.emoji}</span>
+                    <span>{f.label}</span>
+                  </button>
+                ))}
+              </div>
+              {FACE_FILTERS.includes(liveFilter) && (
+                <p className="text-[10px] text-green-600/80 mt-2 font-mono">
+                  🤖 AI Face Aktif — scan wajah berjalan
+                </p>
+              )}
+            </div>
+
             {/* ── Face Tracker Section ── */}
             <div>
               <p className="flex items-center gap-1.5 text-xs text-gray-300 font-semibold uppercase tracking-wider mb-2">
@@ -1150,7 +1220,7 @@ export default function CameraPage() {
                 {faceTrackerReady && faceBoxes.length === 0 && showFaceOverlay && (
                   <p className="text-xs text-gray-500">Tidak ada wajah di frame</p>
                 )}
-                <p className="text-xs text-gray-600">Filter Spotlight / Blur BG / Beauty / Funny otomatis aktifkan scanner wajah.</p>
+                <p className="text-xs text-gray-600">Filter Spotlight / Blur BG / Beauty / Soft Blur / Funny otomatis aktifkan scanner wajah.</p>
               </div>
             </div>
 
@@ -1211,51 +1281,6 @@ export default function CameraPage() {
           </motion.div>
         )}
       </AnimatePresence>
-
-      {/* ── Live Filter Pills ── */}
-      <div className="absolute bottom-28 left-0 right-0 z-20 flex flex-col items-center gap-1.5 pointer-events-none">
-        {/* Face filter label (shown when face filter active) */}
-        {FACE_FILTERS.includes(liveFilter) && (
-          <div className="pointer-events-none flex items-center gap-1.5 bg-black/60 backdrop-blur-sm border border-green-500/30 text-green-300 text-[10px] font-mono px-3 py-1 rounded-full">
-            🤖 Filter AI Wajah Aktif — scan otomatis berjalan
-          </div>
-        )}
-        <div className="pointer-events-auto flex items-center bg-black/70 backdrop-blur-md rounded-full border border-white/10 shadow-lg overflow-x-auto max-w-[94vw]" style={{ padding: "5px 6px", gap: "2px" }}>
-          {/* Regular filters */}
-          {LIVE_FILTERS.filter(f => !FACE_FILTERS.includes(f.id)).map((f) => (
-            <button
-              key={f.id}
-              onClick={() => setLiveFilter(f.id)}
-              className={`flex items-center gap-1 px-2.5 py-1.5 rounded-full text-xs font-medium transition-all flex-shrink-0 ${
-                liveFilter === f.id ? "bg-rose-600 text-white shadow-sm" : "text-gray-300 hover:bg-white/10"
-              }`}
-              title={f.label}
-            >
-              <span className="text-sm">{f.emoji}</span>
-              <span className="hidden sm:inline">{f.label}</span>
-            </button>
-          ))}
-          {/* Divider */}
-          <div className="w-px h-5 bg-white/20 mx-1 flex-shrink-0" />
-          {/* Face filters */}
-          {LIVE_FILTERS.filter(f => FACE_FILTERS.includes(f.id)).map((f) => (
-            <button
-              key={f.id}
-              onClick={() => setLiveFilter(f.id)}
-              className={`flex items-center gap-1 px-2.5 py-1.5 rounded-full text-xs font-medium transition-all flex-shrink-0 border ${
-                liveFilter === f.id
-                  ? "bg-green-600 text-white shadow-sm border-green-400/50"
-                  : "text-green-300 hover:bg-green-900/40 border-green-800/40"
-              }`}
-              title={`${f.label} — AI Face Filter`}
-            >
-              <span className="text-sm">{f.emoji}</span>
-              <span className="hidden sm:inline">{f.label}</span>
-              <span className="text-[8px] opacity-70 hidden sm:inline font-mono">AI</span>
-            </button>
-          ))}
-        </div>
-      </div>
 
       {/* ── Countdown Overlay ── */}
       <AnimatePresence>
