@@ -446,7 +446,26 @@ export async function applyClientFilter(
       break;
     }
 
-    // 20. Face Smooth (Box blur — simulates skin smoothing)
+    // 20. Face Spotlight (darkens background, brightens center — for post-capture)
+    case "face_spotlight": {
+      const cx = w / 2, cy = h / 2;
+      const r = Math.min(w, h) * 0.38;
+      for (let py = 0; py < h; py++) {
+        for (let px = 0; px < w; px++) {
+          const idx = (py * w + px) * 4;
+          const dist = Math.hypot(px - cx, py - cy) / r;
+          const factor = dist <= 1.0
+            ? 1.0 + (1.0 - dist) * 0.12
+            : Math.max(0.12, 1.0 - (dist - 1.0) * 0.6);
+          d[idx] = Math.min(255, d[idx] * factor);
+          d[idx + 1] = Math.min(255, d[idx + 1] * factor);
+          d[idx + 2] = Math.min(255, d[idx + 2] * factor);
+        }
+      }
+      break;
+    }
+
+    // 21. Face Smooth (Box blur)
     case "face_smooth": {
       const strength = Number(params.strength ?? 0.5);
       const k = Math.max(1, Math.round(strength * 4));

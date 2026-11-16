@@ -14,10 +14,10 @@ import { faceTracker, type FaceBox } from "../services/faceTracker";
 
 type LiveFilter =
   | "normal" | "bw" | "vintage" | "dreamy" | "vignette"
-  | "face_blur_bg" | "face_beauty" | "face_funny";
+  | "face_blur_bg" | "face_beauty" | "face_funny" | "face_spotlight";
 type Mode = "single" | "burst3" | "burst4" | "quick";
 
-const FACE_FILTERS: LiveFilter[] = ["face_blur_bg", "face_beauty", "face_funny"];
+const FACE_FILTERS: LiveFilter[] = ["face_blur_bg", "face_beauty", "face_funny", "face_spotlight"];
 
 function applyLiveFilter(
   ctx: CanvasRenderingContext2D,
@@ -140,20 +140,49 @@ function applyLiveFilter(
         }
       }
     }
+  } else if (filter === "face_spotlight") {
+    // Spotlight: radial darkness around detected faces, or center if no faces
+    const centers = faceBoxes.length > 0
+      ? faceBoxes.map((fb) => ({ cx: fb.x + fb.w / 2, cy: fb.y + fb.h / 2, r: Math.max(fb.w, fb.h) * 0.75 }))
+      : [{ cx: w / 2, cy: h / 2, r: Math.min(w, h) * 0.35 }];
+
+    for (let py = 0; py < h; py++) {
+      for (let px = 0; px < w; px++) {
+        const idx = (py * w + px) * 4;
+        // Distance to nearest spotlight center (normalized)
+        let minDist = Infinity;
+        for (const { cx, cy, r } of centers) {
+          const dist = Math.hypot(px - cx, py - cy) / r;
+          if (dist < minDist) minDist = dist;
+        }
+        // Inside spotlight: slight brighten. Outside: darken strongly
+        let factor: number;
+        if (minDist <= 1.0) {
+          factor = 1.0 + (1.0 - minDist) * 0.15; // slight brighten at center
+        } else {
+          // Smooth fade to 0.15 at edge
+          factor = Math.max(0.12, 1.0 - (minDist - 1.0) * 0.6);
+        }
+        d[idx] = Math.min(255, d[idx] * factor);
+        d[idx + 1] = Math.min(255, d[idx + 1] * factor);
+        d[idx + 2] = Math.min(255, d[idx + 2] * factor);
+      }
+    }
   }
 
   ctx.putImageData(imgData, 0, 0);
 }
 
 const LIVE_FILTERS: { id: LiveFilter; label: string; emoji: string }[] = [
-  { id: "normal",       label: "Normal",   emoji: "○" },
-  { id: "bw",           label: "B&W",      emoji: "◑" },
-  { id: "vintage",      label: "Vintage",  emoji: "🎞" },
-  { id: "dreamy",       label: "Dreamy",   emoji: "🌸" },
-  { id: "vignette",     label: "Vignette", emoji: "◉" },
-  { id: "face_blur_bg", label: "Blur BG",  emoji: "🫧" },
-  { id: "face_beauty",  label: "Beauty",   emoji: "✨" },
-  { id: "face_funny",   label: "Funny",    emoji: "🤡" },
+  { id: "normal",          label: "Normal",    emoji: "○" },
+  { id: "bw",              label: "B&W",       emoji: "◑" },
+  { id: "vintage",         label: "Vintage",   emoji: "🎞" },
+  { id: "dreamy",          label: "Dreamy",    emoji: "🌸" },
+  { id: "vignette",        label: "Vignette",  emoji: "◉" },
+  { id: "face_spotlight",  label: "Spotlight", emoji: "🔦" },
+  { id: "face_blur_bg",    label: "Blur BG",   emoji: "🫧" },
+  { id: "face_beauty",     label: "Beauty",    emoji: "✨" },
+  { id: "face_funny",      label: "Funny",     emoji: "🤡" },
 ];
 
 const COUNTDOWN_OPTIONS = [3, 5, 10];
@@ -207,18 +236,18 @@ export default function CameraPage() {
 
   const targetCount = mode === "single" ? 1 : mode === "burst3" ? 3 : 4;
 
+  // Face tracker auto-activates when any face filter selected OR manual overlay ON
   const needsFaceTracker = FACE_FILTERS.includes(liveFilter) || showFaceOverlay;
 
-  /* ── Face Tracker Init & RAF Loop ── */
+  /* ── Face Tracker Init & RAF Loop (auto-draw overlay + live render) ── */
   useEffect(() => {
     if (!needsFaceTracker) {
-      // Cancel loop if running
-      if (rafRef.current) {
-        cancelAnimationFrame(rafRef.current);
-        rafRef.current = null;
-      }
+      if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
       setFaceBoxes([]);
       faceBoxesRef.current = [];
+      // Clear canvases
+      const oc = overlayCanvasRef.current;
+      if (oc) { const c = oc.getContext("2d"); c?.clearRect(0, 0, oc.width, oc.height); }
       return;
     }
 
@@ -235,13 +264,20 @@ export default function CameraPage() {
         setFaceTrackerReady(true);
       }
 
+      let frame = 0;
       const loop = () => {
         if (cancelled) return;
+        frame++;
         const video = videoRef.current;
-        if (video && !video.paused) {
-          const boxes = faceTracker.detect(video);
-          faceBoxesRef.current = boxes;
-          setFaceBoxes(boxes);
+        if (video && !video.paused && video.videoWidth > 0) {
+          // Detect faces every other frame for performance
+          if (frame % 2 === 0) {
+            const boxes = faceTracker.detect(video);
+            faceBoxesRef.current = boxes;
+            setFaceBoxes(boxes);
+          }
+          // Draw scan overlay every frame
+          drawScanOverlay(frame);
         }
         rafRef.current = requestAnimationFrame(loop);
       };
@@ -249,71 +285,117 @@ export default function CameraPage() {
     };
 
     initAndRun();
-
     return () => {
       cancelled = true;
-      if (rafRef.current) {
-        cancelAnimationFrame(rafRef.current);
-        rafRef.current = null;
-      }
+      if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
     };
-  }, [needsFaceTracker]);
+  }, [needsFaceTracker]); // eslint-disable-line
 
-  /* ── Draw overlay canvas ── */
-  useEffect(() => {
+  /* ── Draw animated scan overlay on canvas ── */
+  const drawScanOverlay = useCallback((frame: number) => {
     const canvas = overlayCanvasRef.current;
     const video = videoRef.current;
-    if (!canvas || !video) return;
-    if (!showFaceOverlay || faceBoxes.length === 0) {
-      const ctx = canvas.getContext("2d");
-      ctx?.clearRect(0, 0, canvas.width, canvas.height);
-      return;
-    }
+    if (!canvas || !video || video.clientWidth === 0) return;
 
-    const vw = video.videoWidth || canvas.width;
-    const vh = video.videoHeight || canvas.height;
     const displayW = video.clientWidth;
     const displayH = video.clientHeight;
-
-    canvas.width = displayW;
-    canvas.height = displayH;
+    if (canvas.width !== displayW || canvas.height !== displayH) {
+      canvas.width = displayW;
+      canvas.height = displayH;
+    }
 
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
     ctx.clearRect(0, 0, displayW, displayH);
 
+    const boxes = faceBoxesRef.current;
+    const vw = video.videoWidth || displayW;
+    const vh = video.videoHeight || displayH;
     const scaleX = displayW / vw;
     const scaleY = displayH / vh;
+    const hasFaces = boxes.length > 0;
 
-    ctx.strokeStyle = "#22c55e";
-    ctx.lineWidth = 2;
-    ctx.shadowColor = "#22c55e";
-    ctx.shadowBlur = 8;
+    if (hasFaces) {
+      // ── Detected: draw corner-bracket focus boxes ──
+      for (const fb of boxes) {
+        const x = fb.x * scaleX;
+        const y = fb.y * scaleY;
+        const w = fb.w * scaleX;
+        const h = fb.h * scaleY;
+        const pad = 10;
+        const bx = x - pad, by = y - pad, bw = w + pad * 2, bh = h + pad * 2;
+        const L = Math.min(bw, bh) * 0.22; // corner bracket length
+        const pulse = 0.75 + 0.25 * Math.sin(frame * 0.12); // pulsing opacity
 
-    for (const fb of faceBoxes) {
-      const x = fb.x * scaleX;
-      const y = fb.y * scaleY;
-      const w = fb.w * scaleX;
-      const h = fb.h * scaleY;
-      const r = 10;
-      ctx.beginPath();
-      ctx.moveTo(x + r, y);
-      ctx.lineTo(x + w - r, y);
-      ctx.arcTo(x + w, y, x + w, y + r, r);
-      ctx.lineTo(x + w, y + h - r);
-      ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
-      ctx.lineTo(x + r, y + h);
-      ctx.arcTo(x, y + h, x, y + h - r, r);
-      ctx.lineTo(x, y + r);
-      ctx.arcTo(x, y, x + r, y, r);
-      ctx.closePath();
-      ctx.stroke();
+        ctx.strokeStyle = `rgba(34, 197, 94, ${pulse})`;
+        ctx.lineWidth = 2.5;
+        ctx.lineCap = "round";
+        ctx.shadowColor = "#22c55e";
+        ctx.shadowBlur = 10 * pulse;
 
-      ctx.font = "11px monospace";
-      ctx.fillStyle = "#22c55e";
-      ctx.fillText("FACE", x + 4, y - 4);
+        // Draw 4 corner brackets
+        const corners: [number, number, number, number][] = [
+          [bx, by, 1, 1],       // top-left
+          [bx + bw, by, -1, 1], // top-right
+          [bx, by + bh, 1, -1], // bottom-left
+          [bx + bw, by + bh, -1, -1], // bottom-right
+        ];
+        for (const [cx2, cy2, dx, dy] of corners) {
+          ctx.beginPath();
+          ctx.moveTo(cx2 + dx * L, cy2);
+          ctx.lineTo(cx2, cy2);
+          ctx.lineTo(cx2, cy2 + dy * L);
+          ctx.stroke();
+        }
+
+        ctx.shadowBlur = 0;
+
+        // Label badge above face
+        const label = "WAJAH TERDETEKSI";
+        ctx.font = "bold 10px monospace";
+        const tw = ctx.measureText(label).width;
+        const badgeX = bx + bw / 2 - tw / 2 - 6;
+        const badgeY = by - 22;
+        ctx.fillStyle = `rgba(34, 197, 94, ${pulse * 0.9})`;
+        ctx.beginPath();
+        ctx.roundRect(badgeX, badgeY, tw + 12, 16, 4);
+        ctx.fill();
+        ctx.fillStyle = "#fff";
+        ctx.fillText(label, badgeX + 6, badgeY + 11);
+      }
+    } else {
+      // ── Scanning: draw sweeping line across frame ──
+      const sweepY = (frame * 3) % (displayH + 60) - 30;
+      const scanGrad = ctx.createLinearGradient(0, sweepY - 20, 0, sweepY + 20);
+      scanGrad.addColorStop(0, "rgba(251, 191, 36, 0)");
+      scanGrad.addColorStop(0.5, "rgba(251, 191, 36, 0.55)");
+      scanGrad.addColorStop(1, "rgba(251, 191, 36, 0)");
+      ctx.fillStyle = scanGrad;
+      ctx.fillRect(0, sweepY - 20, displayW, 40);
+
+      // Corner brackets (screen-level, amber, pulsing)
+      const L2 = 36;
+      const p2 = 16;
+      const pulse2 = 0.5 + 0.5 * Math.sin(frame * 0.08);
+      ctx.strokeStyle = `rgba(251, 191, 36, ${0.6 + 0.4 * pulse2})`;
+      ctx.lineWidth = 2;
+      ctx.shadowColor = "#fbbf24";
+      ctx.shadowBlur = 8;
+      ctx.lineCap = "round";
+      const screenCorners: [number, number, number, number][] = [
+        [p2, p2, 1, 1], [displayW - p2, p2, -1, 1],
+        [p2, displayH - p2, 1, -1], [displayW - p2, displayH - p2, -1, -1],
+      ];
+      for (const [cx2, cy2, dx, dy] of screenCorners) {
+        ctx.beginPath();
+        ctx.moveTo(cx2 + dx * L2, cy2);
+        ctx.lineTo(cx2, cy2);
+        ctx.lineTo(cx2, cy2 + dy * L2);
+        ctx.stroke();
+      }
+      ctx.shadowBlur = 0;
     }
-  }, [faceBoxes, showFaceOverlay]);
+  }, []);
 
   /* ── 1. Enumerate Video Devices ── */
   const refreshDevices = useCallback(async () => {
@@ -687,6 +769,14 @@ export default function CameraPage() {
       ? "brightness(105%) contrast(103%)"
       : "none";
 
+  const viewportStyle = {
+    width: rotation % 180 !== 0 ? "calc(100vh - 56px)" : "100%",
+    height: rotation % 180 !== 0 ? "100vw" : "100%",
+    maxWidth: rotation % 180 !== 0 ? "calc(100vh - 56px)" : "100%",
+    maxHeight: rotation % 180 !== 0 ? "100vw" : "100%",
+    transform: `translate(-50%, -50%) rotate(${rotation}deg) ${isMirrored ? "scaleX(-1)" : ""}`,
+  };
+
   return (
     <motion.div
       initial={{ opacity: 0 }}
@@ -703,33 +793,59 @@ export default function CameraPage() {
         autoPlay
         className="absolute top-1/2 left-1/2 transition-all duration-200"
         style={{
-          width: rotation % 180 !== 0 ? "calc(100vh - 56px)" : "100%",
-          height: rotation % 180 !== 0 ? "100vw" : "100%",
-          maxWidth: rotation % 180 !== 0 ? "calc(100vh - 56px)" : "100%",
-          maxHeight: rotation % 180 !== 0 ? "100vw" : "100%",
+          ...viewportStyle,
           objectFit: fitMode === "cover" ? "cover" : "contain",
-          transform: `translate(-50%, -50%) rotate(${rotation}deg) ${isMirrored ? "scaleX(-1)" : ""}`,
           filter: videoCssFilter,
         }}
       />
 
-      {/* ── Face Overlay Canvas ── */}
+      {/* ── Face Scan Overlay Canvas (always visible when face filter active) ── */}
       <canvas
         ref={overlayCanvasRef}
         className="absolute top-1/2 left-1/2 pointer-events-none z-10"
         style={{
-          width: rotation % 180 !== 0 ? "calc(100vh - 56px)" : "100%",
-          height: rotation % 180 !== 0 ? "100vw" : "100%",
-          transform: `translate(-50%, -50%) rotate(${rotation}deg) ${isMirrored ? "scaleX(-1)" : ""}`,
-          opacity: showFaceOverlay ? 1 : 0,
+          ...viewportStyle,
+          objectFit: fitMode === "cover" ? "cover" : "contain",
+          opacity: needsFaceTracker ? 1 : 0,
+          transition: "opacity 0.3s",
         }}
       />
+
+      {/* ── Face Scan Status Badge (top-center, only when face filter active) ── */}
+      {needsFaceTracker && (
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-20 pointer-events-none">
+          {faceTrackerLoading ? (
+            <div className="flex items-center gap-2 bg-black/70 backdrop-blur-md border border-yellow-500/40 text-yellow-300 text-xs font-mono px-3 py-1.5 rounded-full shadow-lg">
+              <span className="inline-block animate-spin">⟳</span>
+              Memuat AI Face Detector...
+            </div>
+          ) : faceBoxes.length > 0 ? (
+            <div className="flex items-center gap-1.5 bg-black/70 backdrop-blur-md border border-green-500/50 text-green-300 text-xs font-mono px-3 py-1.5 rounded-full shadow-lg">
+              <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse inline-block" />
+              {faceBoxes.length} WAJAH TERDETEKSI
+            </div>
+          ) : faceTrackerReady ? (
+            <div className="flex items-center gap-1.5 bg-black/70 backdrop-blur-md border border-yellow-500/40 text-yellow-300 text-xs font-mono px-3 py-1.5 rounded-full shadow-lg">
+              <span className="w-2 h-2 rounded-full bg-yellow-400 animate-ping inline-block" />
+              MEMINDAI WAJAH...
+            </div>
+          ) : null}
+        </div>
+      )}
 
       {/* Vignette Overlay */}
       {liveFilter === "vignette" && (
         <div
           className="absolute inset-0 pointer-events-none z-10"
           style={{ background: "radial-gradient(circle at center, transparent 40%, rgba(0,0,0,0.75) 100%)" }}
+        />
+      )}
+
+      {/* face_spotlight live CSS approximation (darkens edges) */}
+      {liveFilter === "face_spotlight" && (
+        <div
+          className="absolute inset-0 pointer-events-none z-[9]"
+          style={{ background: "radial-gradient(ellipse 55% 65% at 50% 45%, transparent 0%, rgba(0,0,0,0.78) 100%)" }}
         />
       )}
 
@@ -790,11 +906,6 @@ export default function CameraPage() {
         {phoneConnected && (
           <div className="bg-emerald-600/90 text-white text-xs font-medium px-3 py-1.5 rounded-full flex items-center gap-1.5">
             <Smartphone size={13} /> HP Terhubung
-          </div>
-        )}
-        {faceBoxes.length > 0 && needsFaceTracker && (
-          <div className="bg-green-600/80 text-white text-xs font-medium px-2.5 py-1 rounded-full flex items-center gap-1">
-            <Scan size={11} /> {faceBoxes.length} wajah
           </div>
         )}
       </div>
@@ -954,7 +1065,7 @@ export default function CameraPage() {
                 {faceTrackerReady && faceBoxes.length === 0 && showFaceOverlay && (
                   <p className="text-xs text-gray-500">Tidak ada wajah di frame</p>
                 )}
-                <p className="text-xs text-gray-600">Filter Blur BG, Beauty & Funny memerlukan face tracker aktif.</p>
+                <p className="text-xs text-gray-600">Filter Spotlight / Blur BG / Beauty / Funny otomatis aktifkan scanner wajah.</p>
               </div>
             </div>
 
@@ -1017,22 +1128,45 @@ export default function CameraPage() {
       </AnimatePresence>
 
       {/* ── Live Filter Pills ── */}
-      <div className="absolute bottom-28 left-0 right-0 z-20 flex justify-center pointer-events-none">
-        <div className="pointer-events-auto flex items-center gap-1 bg-black/70 backdrop-blur-md rounded-full p-1.5 border border-white/10 shadow-lg overflow-x-auto max-w-[90vw]">
-          {LIVE_FILTERS.map((f) => (
+      <div className="absolute bottom-28 left-0 right-0 z-20 flex flex-col items-center gap-1.5 pointer-events-none">
+        {/* Face filter label (shown when face filter active) */}
+        {FACE_FILTERS.includes(liveFilter) && (
+          <div className="pointer-events-none flex items-center gap-1.5 bg-black/60 backdrop-blur-sm border border-green-500/30 text-green-300 text-[10px] font-mono px-3 py-1 rounded-full">
+            🤖 Filter AI Wajah Aktif — scan otomatis berjalan
+          </div>
+        )}
+        <div className="pointer-events-auto flex items-center bg-black/70 backdrop-blur-md rounded-full border border-white/10 shadow-lg overflow-x-auto max-w-[94vw]" style={{ padding: "5px 6px", gap: "2px" }}>
+          {/* Regular filters */}
+          {LIVE_FILTERS.filter(f => !FACE_FILTERS.includes(f.id)).map((f) => (
             <button
               key={f.id}
               onClick={() => setLiveFilter(f.id)}
               className={`flex items-center gap-1 px-2.5 py-1.5 rounded-full text-xs font-medium transition-all flex-shrink-0 ${
                 liveFilter === f.id ? "bg-rose-600 text-white shadow-sm" : "text-gray-300 hover:bg-white/10"
               }`}
-              title={FACE_FILTERS.includes(f.id) ? `${f.label} (Face Filter)` : f.label}
+              title={f.label}
             >
               <span className="text-sm">{f.emoji}</span>
               <span className="hidden sm:inline">{f.label}</span>
-              {FACE_FILTERS.includes(f.id) && (
-                <span className="text-[9px] opacity-60 hidden sm:inline">AI</span>
-              )}
+            </button>
+          ))}
+          {/* Divider */}
+          <div className="w-px h-5 bg-white/20 mx-1 flex-shrink-0" />
+          {/* Face filters */}
+          {LIVE_FILTERS.filter(f => FACE_FILTERS.includes(f.id)).map((f) => (
+            <button
+              key={f.id}
+              onClick={() => setLiveFilter(f.id)}
+              className={`flex items-center gap-1 px-2.5 py-1.5 rounded-full text-xs font-medium transition-all flex-shrink-0 border ${
+                liveFilter === f.id
+                  ? "bg-green-600 text-white shadow-sm border-green-400/50"
+                  : "text-green-300 hover:bg-green-900/40 border-green-800/40"
+              }`}
+              title={`${f.label} — AI Face Filter`}
+            >
+              <span className="text-sm">{f.emoji}</span>
+              <span className="hidden sm:inline">{f.label}</span>
+              <span className="text-[8px] opacity-70 hidden sm:inline font-mono">AI</span>
             </button>
           ))}
         </div>
