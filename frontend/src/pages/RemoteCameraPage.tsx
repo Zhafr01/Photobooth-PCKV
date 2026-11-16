@@ -32,9 +32,8 @@ export default function RemoteCameraPage() {
         const stream = await navigator.mediaDevices.getUserMedia({
           video: {
             facingMode,
-            width: { ideal: 1920, min: 1280 },
-            height: { ideal: 1080, min: 720 },
-            frameRate: { ideal: 30 },
+            width: { ideal: 1920 },
+            height: { ideal: 1080 },
           },
           audio: false,
         });
@@ -64,34 +63,13 @@ export default function RemoteCameraPage() {
           setStatusMessage("Tersambung ke server, memanggil booth...");
           const call = peer.call(targetPeerId, stream);
 
-          // Boost WebRTC bitrate untuk kualitas HD jernih (8 Mbps)
-          setTimeout(() => {
-            try {
-              const pc = (call as any).peerConnection as RTCPeerConnection;
-              if (pc) {
-                const senders = pc.getSenders();
-                const videoSender = senders.find((s) => s.track?.kind === "video");
-                if (videoSender && videoSender.getParameters) {
-                  const params = videoSender.getParameters();
-                  if (!params.encodings || params.encodings.length === 0) {
-                    params.encodings = [{}];
-                  }
-                  params.encodings[0].maxBitrate = 8000000; // 8 Mbps bitrate HD
-                  videoSender.setParameters(params).catch(console.warn);
-                }
-              }
-            } catch (e) {
-              console.warn("Bitrate boost warning:", e);
-            }
-          }, 800);
-
           call.on("close", () => {
             setStatus("error");
             setStatusMessage("Koneksi ke booth terputus.");
           });
 
           setStatus("streaming");
-          setStatusMessage("Kamera HP terhubung! Sedang streaming kualitas Full HD.");
+          setStatusMessage("Kamera HP terhubung! Sedang live streaming ke Photobooth.");
         });
 
         peer.on("error", (err) => {
@@ -140,12 +118,6 @@ export default function RemoteCameraPage() {
         >
           <FlipHorizontal size={18} />
         </button>
-      </div>
-
-      {/* Tips Landscape */}
-      <div className="w-full max-w-md mt-2 bg-rose-950/40 border border-rose-500/30 rounded-xl px-3 py-2 flex items-center gap-2.5 text-xs text-rose-200">
-        <span className="text-base">🔄</span>
-        <span><strong>Tips Kualitas Tajam:</strong> Miringkan HP ke posisi <strong>Mendatar (Landscape)</strong> agar tidak ter-zoom/buram di laptop.</span>
       </div>
 
       {/* Live Camera Viewfinder */}

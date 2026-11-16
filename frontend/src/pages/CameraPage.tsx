@@ -217,6 +217,14 @@ export default function CameraPage() {
     };
   }, []);
 
+  // Ensure remote stream is playing whenever phoneConnected is true
+  useEffect(() => {
+    if (phoneConnected && remoteStreamRef.current && videoRef.current) {
+      videoRef.current.srcObject = remoteStreamRef.current;
+      videoRef.current.play().catch(console.error);
+    }
+  }, [phoneConnected]);
+
   /* ── 4. Lifecycle: Init Camera & Device Listener ── */
   useEffect(() => {
     let isCancelled = false;
