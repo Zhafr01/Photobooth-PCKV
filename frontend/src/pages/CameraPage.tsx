@@ -722,6 +722,36 @@ export default function CameraPage() {
     const outW = isSideways ? rawH : rawW;
     const outH = isSideways ? rawW : rawH;
 
+    // For face filters: capture from liveRenderCanvas (already has correct cover-crop + filter)
+    // then scale up to full resolution. This guarantees filter matches preview exactly.
+    const isFaceFilter = FACE_FILTERS.includes(liveFilter);
+    const liveCanvas = liveRenderCanvasRef.current;
+    if (isFaceFilter && liveCanvas && liveCanvas.width > 0) {
+      canvas.width = outW;
+      canvas.height = outH;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = "high";
+
+      // liveRenderCanvas already has: cover-crop, filter applied, CSS mirror via viewportStyle
+      // We just scale it up. Mirror: liveCanvas is NOT internally mirrored (CSS does it),
+      // so we need to flip horizontally if mirrored.
+      ctx.save();
+      ctx.translate(outW / 2, outH / 2);
+      if (rotation !== 0) ctx.rotate((rotation * Math.PI) / 180);
+      if (isMirrored) ctx.scale(-1, 1);
+      ctx.drawImage(liveCanvas, -outW / 2, -outH / 2, outW, outH);
+      ctx.restore();
+
+      const b64 = canvas.toDataURL("image/png", 1.0).split(",")[1];
+      setFlash(true);
+      setTimeout(() => setFlash(false), 180);
+      setCapturedPhotos((prev) => [...prev, b64]);
+      return;
+    }
+
+    // For non-face filters: capture from raw video at full resolution
     canvas.width = outW;
     canvas.height = outH;
 
@@ -738,16 +768,8 @@ export default function CameraPage() {
     ctx.drawImage(video, -rawW / 2, -rawH / 2, rawW, rawH);
     ctx.restore();
 
-    // Transform faceBoxes from video-pixel coords → capture canvas coords
-    // Canvas is outW×outH = rawW×rawH (full res), so scale = 1:1 but mirroring may flip X
-    const captureFaceBoxes: FaceBox[] = faceBoxesRef.current.map(fb => {
-      let bx = fb.x;
-      if (isMirrored) bx = rawW - fb.x - fb.w; // flip X when mirrored
-      return { x: bx, y: fb.y, w: fb.w, h: fb.h };
-    });
-
-    // Apply live filter (including face filters using transformed faceBoxes)
-    applyLiveFilter(ctx, canvas.width, canvas.height, liveFilter, captureFaceBoxes);
+    // Apply non-face filter (B&W, Vintage, Dreamy, Vignette, Normal)
+    applyLiveFilter(ctx, canvas.width, canvas.height, liveFilter, []);
 
     const b64 = canvas.toDataURL("image/png", 1.0).split(",")[1];
     setFlash(true);
@@ -811,28 +833,47 @@ export default function CameraPage() {
               const isSideways = rotation % 180 !== 0;
               const outW = isSideways ? rawH : rawW;
               const outH = isSideways ? rawW : rawH;
-              canvas.width = outW;
-              canvas.height = outH;
-              const ctx = canvas.getContext("2d");
-              if (ctx) {
-                ctx.imageSmoothingEnabled = true;
-                ctx.imageSmoothingQuality = "high";
-                ctx.save();
-                ctx.translate(outW / 2, outH / 2);
-                if (rotation !== 0) ctx.rotate((rotation * Math.PI) / 180);
-                if (isMirrored) ctx.scale(-1, 1);
-                ctx.drawImage(video, -rawW / 2, -rawH / 2, rawW, rawH);
-                ctx.restore();
-                const captureFaceBoxesQ: FaceBox[] = faceBoxesRef.current.map(fb => {
-                  let bx = fb.x;
-                  if (isMirrored) bx = rawW - fb.x - fb.w;
-                  return { x: bx, y: fb.y, w: fb.w, h: fb.h };
-                });
-                applyLiveFilter(ctx, canvas.width, canvas.height, liveFilter, captureFaceBoxesQ);
-                const b64 = canvas.toDataURL("image/png", 1.0).split(",")[1];
-                quickPhotos.push(b64);
-                setFlash(true);
-                setTimeout(() => setFlash(false), 180);
+
+              // For face filters: use liveRenderCanvas (cover-crop + filter already applied)
+              const isFaceFilterQ = FACE_FILTERS.includes(liveFilter);
+              const liveCanvasQ = liveRenderCanvasRef.current;
+              if (isFaceFilterQ && liveCanvasQ && liveCanvasQ.width > 0) {
+                canvas.width = outW;
+                canvas.height = outH;
+                const ctx = canvas.getContext("2d");
+                if (ctx) {
+                  ctx.imageSmoothingEnabled = true;
+                  ctx.imageSmoothingQuality = "high";
+                  ctx.save();
+                  ctx.translate(outW / 2, outH / 2);
+                  if (rotation !== 0) ctx.rotate((rotation * Math.PI) / 180);
+                  if (isMirrored) ctx.scale(-1, 1);
+                  ctx.drawImage(liveCanvasQ, -outW / 2, -outH / 2, outW, outH);
+                  ctx.restore();
+                  const b64 = canvas.toDataURL("image/png", 1.0).split(",")[1];
+                  quickPhotos.push(b64);
+                  setFlash(true);
+                  setTimeout(() => setFlash(false), 180);
+                }
+              } else {
+                canvas.width = outW;
+                canvas.height = outH;
+                const ctx = canvas.getContext("2d");
+                if (ctx) {
+                  ctx.imageSmoothingEnabled = true;
+                  ctx.imageSmoothingQuality = "high";
+                  ctx.save();
+                  ctx.translate(outW / 2, outH / 2);
+                  if (rotation !== 0) ctx.rotate((rotation * Math.PI) / 180);
+                  if (isMirrored) ctx.scale(-1, 1);
+                  ctx.drawImage(video, -rawW / 2, -rawH / 2, rawW, rawH);
+                  ctx.restore();
+                  applyLiveFilter(ctx, canvas.width, canvas.height, liveFilter, []);
+                  const b64 = canvas.toDataURL("image/png", 1.0).split(",")[1];
+                  quickPhotos.push(b64);
+                  setFlash(true);
+                  setTimeout(() => setFlash(false), 180);
+                }
               }
             }
 
