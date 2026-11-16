@@ -28,25 +28,42 @@ export default function ResultPage() {
   useEffect(() => {
     if (!gifUrl && photos.length > 0) {
       setGifGenerating(true);
-      const imgSources = photos.map((p) => `data:image/png;base64,${p}`);
-      // Boomerang effect: add reverse sequence
-      const boomerangSequence = [...imgSources, ...[...imgSources].reverse().slice(1, -1)];
 
-      gifshot.createGIF(
-        {
-          images: boomerangSequence,
-          interval: 0.3,
-          gifWidth: 480,
-          gifHeight: 360,
-        },
-        (obj: { error: boolean; image: string }) => {
-          setGifGenerating(false);
-          if (!obj.error && obj.image) {
-            setGifUrl(obj.image);
-            dispatch({ type: "SET_SESSION_GIF", payload: obj.image });
+      // Normalize all photos to same size (480×360) before making GIF
+      // This prevents gifshot from failing when photos have different aspect ratios
+      const GIF_W = 480, GIF_H = 360;
+      const normalizeImage = (b64: string): Promise<string> =>
+        new Promise((resolve) => {
+          const img = document.createElement("img");
+          img.onload = () => {
+            const c = document.createElement("canvas");
+            c.width = GIF_W; c.height = GIF_H;
+            const ctx = c.getContext("2d")!;
+            const scale = Math.max(GIF_W / img.width, GIF_H / img.height);
+            const sw = GIF_W / scale, sh = GIF_H / scale;
+            const sx = (img.width - sw) / 2, sy = (img.height - sh) / 2;
+            ctx.drawImage(img, sx, sy, sw, sh, 0, 0, GIF_W, GIF_H);
+            resolve(c.toDataURL("image/png"));
+          };
+          img.onerror = () => resolve(`data:image/png;base64,${b64}`);
+          img.src = `data:image/png;base64,${b64}`;
+        });
+
+      Promise.all(photos.map(normalizeImage)).then((normalized) => {
+        const boomerangSequence = [...normalized, ...[...normalized].reverse().slice(1, -1)];
+        gifshot.createGIF(
+          { images: boomerangSequence, interval: 0.3, gifWidth: GIF_W, gifHeight: GIF_H },
+          (obj: { error: boolean; image: string; errorMsg?: string }) => {
+            setGifGenerating(false);
+            if (!obj.error && obj.image) {
+              setGifUrl(obj.image);
+              dispatch({ type: "SET_SESSION_GIF", payload: obj.image });
+            } else {
+              console.warn("GIF generation failed:", obj.errorMsg);
+            }
           }
-        }
-      );
+        );
+      });
     }
   }, [photos, gifUrl, dispatch]);
 

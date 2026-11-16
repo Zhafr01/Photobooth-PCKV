@@ -826,6 +826,47 @@ export default function CameraPage() {
     localStorage.setItem("pckv_camera_device_id", deviceId);
   };
 
+  // Flip front/back camera on phone (via MediaDevices facingMode toggle)
+  const handleFlipPhoneCamera = useCallback(async () => {
+    if (!videoRef.current) return;
+    const currentStream = remoteStreamRef.current || localStreamRef.current;
+    if (!currentStream) return;
+    const track = currentStream.getVideoTracks()[0];
+    const settings = track?.getSettings() as (MediaTrackSettings & { facingMode?: string }) | undefined;
+    const currentFacing = settings?.facingMode || "user";
+    const nextFacing = currentFacing === "user" ? "environment" : "user";
+    try {
+      const newStream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { exact: nextFacing }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+        audio: false,
+      });
+      // Stop old tracks
+      currentStream.getVideoTracks().forEach((t) => t.stop());
+      if (remoteStreamRef.current) {
+        remoteStreamRef.current = newStream;
+      } else {
+        localStreamRef.current = newStream;
+      }
+      videoRef.current.srcObject = newStream;
+      videoRef.current.play().catch(console.error);
+    } catch {
+      // facingMode exact may fail on desktop — try without exact
+      try {
+        const newStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: nextFacing },
+          audio: false,
+        });
+        currentStream.getVideoTracks().forEach((t) => t.stop());
+        if (remoteStreamRef.current) remoteStreamRef.current = newStream;
+        else localStreamRef.current = newStream;
+        videoRef.current.srcObject = newStream;
+        videoRef.current.play().catch(console.error);
+      } catch (err) {
+        console.warn("Cannot flip camera:", err);
+      }
+    }
+  }, []);
+
   /* ── 5. Capture Photo ── */
   const capturePhoto = useCallback(() => {
     const video = videoRef.current;
@@ -1081,6 +1122,7 @@ export default function CameraPage() {
     maxWidth: rotation % 180 !== 0 ? "calc(100vh - 56px)" : "100%",
     maxHeight: rotation % 180 !== 0 ? "100vw" : "100%",
     transform: `translate(-50%, -50%) rotate(${rotation}deg) ${isMirrored ? "scaleX(-1)" : ""}`,
+    objectFit: fitMode === "cover" ? "cover" as const : "contain" as const,
   };
 
   return (
@@ -1114,6 +1156,8 @@ export default function CameraPage() {
         className="absolute top-1/2 left-1/2 pointer-events-none"
         style={{
           ...viewportStyle,
+          // canvas does not support objectFit — size it to match video display area
+          // Cover mode: fill container, Contain: fit inside
           objectFit: fitMode === "cover" ? "cover" : "contain",
           opacity: FACE_FILTERS.includes(liveFilter) ? 1 : 0,
           transition: "opacity 0.2s",
@@ -1259,6 +1303,15 @@ export default function CameraPage() {
           title={isMirrored ? "Cermin: Aktif" : "Cermin: Mati"}
         >
           <FlipHorizontal size={18} />
+        </button>
+
+        {/* Flip front/back camera — works on mobile/phone camera */}
+        <button
+          onClick={handleFlipPhoneCamera}
+          className="w-10 h-10 rounded-full backdrop-blur-sm text-white flex items-center justify-center transition-colors border border-white/10 bg-black/60 hover:bg-black/80"
+          title="Ganti Kamera Depan/Belakang"
+        >
+          <RotateCcw size={18} />
         </button>
 
         <button
