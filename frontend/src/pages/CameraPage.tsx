@@ -188,8 +188,11 @@ export default function CameraPage() {
       });
     });
 
-    // Generate QR code for phone remote
-    const remoteUrl = `${window.location.origin}${window.location.pathname.replace(/\/camera$/, "")}/remote-camera?peer=${randomId}`;
+    // Generate QR code for phone remote (compatible with GitHub Pages HashRouter)
+    const cleanPath = window.location.pathname.endsWith("/")
+      ? window.location.pathname
+      : `${window.location.pathname}/`;
+    const remoteUrl = `${window.location.origin}${cleanPath}#/remote-camera?peer=${randomId}`;
     QRCode.toDataURL(remoteUrl, { margin: 1, width: 220 })
       .then((qr) => setPhoneQrUrl(qr))
       .catch(console.error);
