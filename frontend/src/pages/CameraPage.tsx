@@ -62,66 +62,60 @@ function applyLiveFilter(
       }
     }
   } else if (filter === "face_blur_bg" && faceBoxes.length > 0) {
-    // Build ellipse face mask with feathered (soft) edges
-    // mask[i] = 0.0 (blur bg) … 1.0 (keep face sharp)
+    // Ellipse feathered mask: 0 = blur bg, 1 = keep face
     const mask = new Float32Array(w * h);
     for (const fb of faceBoxes) {
-      // Expand face box slightly to include hair/neck
-      const padX = fb.w * 0.20;
-      const padY = fb.h * 0.25;
       const cx = fb.x + fb.w / 2;
       const cy = fb.y + fb.h / 2;
-      const rx = fb.w / 2 + padX;   // ellipse x-radius
-      const ry = fb.h / 2 + padY;   // ellipse y-radius
-      const feather = 0.25;          // feather band: 25% of radius from edge inward
-
+      const rx = fb.w / 2 * 1.20;
+      const ry = fb.h / 2 * 1.25;
+      const feather = 0.28;
       const x0 = Math.max(0, Math.floor(cx - rx - 2));
       const y0 = Math.max(0, Math.floor(cy - ry - 2));
       const x1 = Math.min(w - 1, Math.ceil(cx + rx + 2));
       const y1 = Math.min(h - 1, Math.ceil(cy + ry + 2));
-
       for (let py = y0; py <= y1; py++) {
         for (let px = x0; px <= x1; px++) {
-          // Normalized distance from ellipse center (1.0 = on ellipse edge)
-          const nx = (px - cx) / rx;
-          const ny = (py - cy) / ry;
-          const dist = Math.sqrt(nx * nx + ny * ny);
-          // Smooth step: 0 outside, 1 inside, feathered at edge
+          const dist = Math.sqrt(((px - cx) / rx) ** 2 + ((py - cy) / ry) ** 2);
           let alpha = 0;
-          if (dist <= 1.0 - feather) {
-            alpha = 1;
-          } else if (dist < 1.0) {
-            // Smooth fade in feather band
-            const t = (1.0 - dist) / feather;
-            alpha = t * t * (3 - 2 * t); // smoothstep
-          }
-          const idx = py * w + px;
-          if (alpha > mask[idx]) mask[idx] = alpha;
+          if (dist <= 1 - feather) { alpha = 1; }
+          else if (dist < 1) { const t = (1 - dist) / feather; alpha = t * t * (3 - 2 * t); }
+          if (alpha > mask[py * w + px]) mask[py * w + px] = alpha;
         }
       }
     }
 
-    // Box blur background — apply blurK passes for stronger effect
-    const copy = new Uint8ClampedArray(d);
+    // Separable box blur: horizontal then vertical pass. O(k) per pixel -- no lag at high k.
     const k = Math.max(1, Math.round(blurK));
-    for (let y = k; y < h - k; y++) {
-      for (let x = k; x < w - k; x++) {
-        const faceAlpha = mask[y * w + x];
-        if (faceAlpha >= 1) continue; // fully inside face — skip
+    const tmp = new Float32Array(w * h * 3);
 
-        let r = 0, g = 0, b = 0, cnt = 0;
-        for (let dy = -k; dy <= k; dy++) {
-          for (let dx = -k; dx <= k; dx++) {
-            const p = ((y + dy) * w + (x + dx)) * 4;
-            r += copy[p]; g += copy[p + 1]; b += copy[p + 2]; cnt++;
-          }
-        }
+    // Horizontal pass
+    for (let y = 0; y < h; y++) {
+      let sr = 0, sg = 0, sb = 0;
+      for (let x2 = 0; x2 < k && x2 < w; x2++) { const p = (y * w + x2) * 4; sr += d[p]; sg += d[p+1]; sb += d[p+2]; }
+      for (let x = 0; x < w; x++) {
+        const addX = Math.min(x + k, w - 1); const remX = Math.max(x - k - 1, 0);
+        const pa = (y * w + addX) * 4; sr += d[pa]; sg += d[pa+1]; sb += d[pa+2];
+        const pr = (y * w + remX) * 4; sr -= d[pr]; sg -= d[pr+1]; sb -= d[pr+2];
+        const cnt = addX - Math.max(x - k, 0) + 1;
+        const ti = (y * w + x) * 3; tmp[ti] = sr/cnt; tmp[ti+1] = sg/cnt; tmp[ti+2] = sb/cnt;
+      }
+    }
+    // Vertical pass + blend
+    for (let x = 0; x < w; x++) {
+      let sr = 0, sg = 0, sb = 0;
+      for (let y2 = 0; y2 < k && y2 < h; y2++) { const ti = (y2 * w + x) * 3; sr += tmp[ti]; sg += tmp[ti+1]; sb += tmp[ti+2]; }
+      for (let y = 0; y < h; y++) {
+        const addY = Math.min(y + k, h - 1); const remY = Math.max(y - k - 1, 0);
+        const ta = (addY * w + x) * 3; sr += tmp[ta]; sg += tmp[ta+1]; sb += tmp[ta+2];
+        const tr = (remY * w + x) * 3; sr -= tmp[tr]; sg -= tmp[tr+1]; sb -= tmp[tr+2];
+        const cnt = addY - Math.max(y - k, 0) + 1;
+        const faceA = mask[y * w + x];
+        if (faceA >= 1) continue;
         const idx = (y * w + x) * 4;
-        const blurR = r / cnt, blurG = g / cnt, blurB = b / cnt;
-        // Blend: face area keeps original, bg gets blur
-        d[idx]     = blurR + (copy[idx]     - blurR) * faceAlpha;
-        d[idx + 1] = blurG + (copy[idx + 1] - blurG) * faceAlpha;
-        d[idx + 2] = blurB + (copy[idx + 2] - blurB) * faceAlpha;
+        d[idx]   = sr/cnt + (d[idx]   - sr/cnt) * faceA;
+        d[idx+1] = sg/cnt + (d[idx+1] - sg/cnt) * faceA;
+        d[idx+2] = sb/cnt + (d[idx+2] - sb/cnt) * faceA;
       }
     }
   } else if (filter === "face_beauty" && faceBoxes.length > 0) {
@@ -135,12 +129,9 @@ function applyLiveFilter(
       for (let y = y0; y <= y1; y++) {
         for (let x = x0; x <= x1; x++) {
           const idx = (y * w + x) * 4;
-          // Warm skin tone: boost red slightly, lift shadows, increase saturation
           const r = d[idx], g = d[idx + 1], b = d[idx + 2];
           const lum = 0.299 * r + 0.587 * g + 0.114 * b;
-          // Lift shadows (soft light blend)
           const lift = (v: number) => Math.min(255, v + (255 - v) * 0.08);
-          // Warm: +red +green slightly, -blue slightly
           d[idx]     = Math.min(255, lift(r) * 1.06 + lum * 0.02);
           d[idx + 1] = Math.min(255, lift(g) * 1.02);
           d[idx + 2] = Math.min(255, lift(b) * 0.95);
@@ -148,27 +139,50 @@ function applyLiveFilter(
       }
     }
   } else if (filter === "face_soft_blur" && faceBoxes.length > 0) {
-    // Soft Blur: gentle box blur only on the face area (original beauty blur, kept as new filter)
-    const copy = new Uint8ClampedArray(d);
-    const k = 3;
+    // Soft blur on face area -- separable blur with ellipse mask, adjustable k
+    const k = Math.max(1, Math.round(blurK));
+    const tmp = new Float32Array(w * h * 3);
+
+    // Horizontal pass (full image)
+    for (let y = 0; y < h; y++) {
+      let sr = 0, sg = 0, sb = 0;
+      for (let x2 = 0; x2 < k && x2 < w; x2++) { const p = (y * w + x2) * 4; sr += d[p]; sg += d[p+1]; sb += d[p+2]; }
+      for (let x = 0; x < w; x++) {
+        const addX = Math.min(x + k, w - 1); const remX = Math.max(x - k - 1, 0);
+        const pa = (y * w + addX) * 4; sr += d[pa]; sg += d[pa+1]; sb += d[pa+2];
+        const pr = (y * w + remX) * 4; sr -= d[pr]; sg -= d[pr+1]; sb -= d[pr+2];
+        const cnt = addX - Math.max(x - k, 0) + 1;
+        const ti = (y * w + x) * 3; tmp[ti] = sr/cnt; tmp[ti+1] = sg/cnt; tmp[ti+2] = sb/cnt;
+      }
+    }
+    // Vertical pass + apply only inside face ellipse
     for (const fb of faceBoxes) {
-      const x0 = Math.max(k, Math.floor(fb.x));
-      const y0 = Math.max(k, Math.floor(fb.y));
-      const x1 = Math.min(w - k - 1, Math.floor(fb.x + fb.w));
-      const y1 = Math.min(h - k - 1, Math.floor(fb.y + fb.h));
-      for (let y = y0; y <= y1; y++) {
-        for (let x = x0; x <= x1; x++) {
-          let r = 0, g = 0, b = 0, cnt = 0;
-          for (let dy = -k; dy <= k; dy++) {
-            for (let dx = -k; dx <= k; dx++) {
-              const p = ((y + dy) * w + (x + dx)) * 4;
-              r += copy[p]; g += copy[p + 1]; b += copy[p + 2]; cnt++;
-            }
-          }
-          const idx = (y * w + x) * 4;
-          d[idx] = r / cnt;
-          d[idx + 1] = g / cnt;
-          d[idx + 2] = b / cnt;
+      const cx = fb.x + fb.w / 2, cy = fb.y + fb.h / 2;
+      const rx = fb.w / 2 * 1.1, ry = fb.h / 2 * 1.1;
+      const feather = 0.25;
+      const x0 = Math.max(0, Math.floor(cx - rx - 2));
+      const y0 = Math.max(0, Math.floor(cy - ry - 2));
+      const x1 = Math.min(w - 1, Math.ceil(cx + rx + 2));
+      const y1 = Math.min(h - 1, Math.ceil(cy + ry + 2));
+      for (let px = x0; px <= x1; px++) {
+        let sr = 0, sg = 0, sb = 0;
+        for (let py2 = Math.max(0, y0 - k); py2 <= Math.min(h-1, y0); py2++) {
+          const ti = (py2 * w + px) * 3; sr += tmp[ti]; sg += tmp[ti+1]; sb += tmp[ti+2];
+        }
+        for (let py = y0; py <= y1; py++) {
+          const addY = Math.min(py + k, h - 1); const remY = Math.max(py - k - 1, 0);
+          const ta = (addY * w + px) * 3; sr += tmp[ta]; sg += tmp[ta+1]; sb += tmp[ta+2];
+          const tr = (remY * w + px) * 3; sr -= tmp[tr]; sg -= tmp[tr+1]; sb -= tmp[tr+2];
+          const cnt = addY - Math.max(py - k, 0) + 1;
+          const dist = Math.sqrt(((px - cx) / rx) ** 2 + ((py - cy) / ry) ** 2);
+          let alpha = 0;
+          if (dist <= 1 - feather) { alpha = 1; }
+          else if (dist < 1) { const t = (1 - dist) / feather; alpha = t * t * (3 - 2 * t); }
+          if (alpha <= 0) continue;
+          const idx = (py * w + px) * 4;
+          d[idx]   = d[idx]   + (sr/cnt - d[idx])   * alpha;
+          d[idx+1] = d[idx+1] + (sg/cnt - d[idx+1]) * alpha;
+          d[idx+2] = d[idx+2] + (sb/cnt - d[idx+2]) * alpha;
         }
       }
     }
@@ -1311,7 +1325,7 @@ export default function CameraPage() {
                 {FACE_FILTERS.includes(liveFilter) && <p className="text-[10px] text-green-600/80 mt-2 font-mono">🤖 AI Face Aktif — scan wajah berjalan</p>}
 
                 {/* Blur strength slider — only shown for blur bg filter */}
-                {liveFilter === "face_blur_bg" && (
+                {(liveFilter === "face_blur_bg" || liveFilter === "face_soft_blur") && (
                   <div className="mt-3 bg-white/5 border border-white/10 rounded-xl p-3">
                     <div className="flex items-center justify-between mb-2">
                       <span className="text-xs text-gray-300 font-semibold">🫧 Kekuatan Blur</span>
