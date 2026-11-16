@@ -465,56 +465,60 @@ export default function CameraPage() {
     const toDispY = coverScale;
 
     if (hasFaces) {
-      // ── Detected: draw corner-bracket focus boxes ──
+      // ── Detected: draw ellipse focus ring around face ──
       for (const fb of boxes) {
         // Map from video-pixel space → display-canvas space using cover crop
         let rawX = (fb.x - srcX) * toDispX;
         const rawY = (fb.y - srcY) * toDispY;
         const rawW = fb.w * toDispX;
-        const h = fb.h * toDispY;
+        const rawH = fb.h * toDispY;
         // Flip X if mirrored
-        const x = mirrored ? displayW - rawX - rawW : rawX;
-        const y = rawY;
-        const w = rawW;
-        const pad = 10;
-        const bx = x - pad, by = y - pad, bw = w + pad * 2, bh = h + pad * 2;
-        const L = Math.min(bw, bh) * 0.22; // corner bracket length
-        const pulse = 0.75 + 0.25 * Math.sin(frame * 0.12); // pulsing opacity
+        const bx = mirrored ? displayW - rawX - rawW : rawX;
+        const by = rawY;
+        const bw = rawW;
+        const bh = rawH;
 
+        // Ellipse center & radii (with padding)
+        const ecx = bx + bw / 2;
+        const ecy = by + bh / 2;
+        const erx = bw / 2 * 1.18; // slightly wider than face box
+        const ery = bh / 2 * 1.22; // slightly taller (include hair)
+
+        const pulse = 0.75 + 0.25 * Math.sin(frame * 0.12);
+
+        // Outer glow ellipse
+        ctx.shadowColor = "#22c55e";
+        ctx.shadowBlur = 14 * pulse;
+        ctx.strokeStyle = `rgba(34, 197, 94, ${pulse * 0.5})`;
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.ellipse(ecx, ecy, erx + 4, ery + 4, 0, 0, Math.PI * 2);
+        ctx.stroke();
+
+        // Main ellipse ring
+        ctx.shadowBlur = 8 * pulse;
         ctx.strokeStyle = `rgba(34, 197, 94, ${pulse})`;
         ctx.lineWidth = 2.5;
-        ctx.lineCap = "round";
-        ctx.shadowColor = "#22c55e";
-        ctx.shadowBlur = 10 * pulse;
-
-        // Draw 4 corner brackets
-        const corners: [number, number, number, number][] = [
-          [bx, by, 1, 1],       // top-left
-          [bx + bw, by, -1, 1], // top-right
-          [bx, by + bh, 1, -1], // bottom-left
-          [bx + bw, by + bh, -1, -1], // bottom-right
-        ];
-        for (const [cx2, cy2, dx, dy] of corners) {
-          ctx.beginPath();
-          ctx.moveTo(cx2 + dx * L, cy2);
-          ctx.lineTo(cx2, cy2);
-          ctx.lineTo(cx2, cy2 + dy * L);
-          ctx.stroke();
-        }
-
+        ctx.setLineDash([Math.PI * erx * 0.15, Math.PI * erx * 0.05]);
+        ctx.lineDashOffset = -(frame * 1.5); // rotating dashes
+        ctx.beginPath();
+        ctx.ellipse(ecx, ecy, erx, ery, 0, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.setLineDash([]);
         ctx.shadowBlur = 0;
 
-        // Label badge above face (always readable, no mirror on text)
+        // Label badge above face
         const label = "WAJAH TERDETEKSI";
         ctx.font = "bold 10px monospace";
         const tw = ctx.measureText(label).width;
-        const badgeX = bx + bw / 2 - tw / 2 - 6;
-        const badgeY = by - 22;
+        const badgeX = ecx - tw / 2 - 6;
+        const badgeY = ecy - ery - 24;
         ctx.fillStyle = `rgba(34, 197, 94, ${pulse * 0.9})`;
         ctx.beginPath();
         ctx.roundRect(badgeX, badgeY, tw + 12, 16, 4);
         ctx.fill();
         ctx.fillStyle = "#fff";
+        ctx.shadowBlur = 0;
         ctx.fillText(label, badgeX + 6, badgeY + 11);
       }
     } else {
