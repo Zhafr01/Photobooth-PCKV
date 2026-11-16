@@ -67,13 +67,29 @@ export default function ResultPage() {
     }
   }, [photos, gifUrl, dispatch]);
 
-  // 2. Generate QR Code for Phone Download (Bagian 16 PDF)
+  // 2. Generate QR Code for Phone Download — save to localStorage, QR → /download?key=XXXX
   useEffect(() => {
-    const downloadUrl = window.location.href;
+    if (!result) return;
+    // Generate a short unique key for this session
+    const key = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const payload: { photostrip?: string; gif?: string } = { photostrip: result };
+    if (gifUrl) payload.gif = gifUrl;
+    try {
+      localStorage.setItem(`pckv_download_${key}`, JSON.stringify(payload));
+    } catch {
+      // localStorage full — clear old pckv keys
+      Object.keys(localStorage)
+        .filter((k) => k.startsWith("pckv_download_"))
+        .forEach((k) => localStorage.removeItem(k));
+      try { localStorage.setItem(`pckv_download_${key}`, JSON.stringify(payload)); } catch { /* ignore */ }
+    }
+    // Build the download URL — works on same LAN via GitHub Pages
+    const baseUrl = `${window.location.origin}${window.location.pathname}`;
+    const downloadUrl = `${baseUrl}#/download?key=${key}`;
     QRCode.toDataURL(downloadUrl, { margin: 1, width: 240 })
       .then((url) => setQrCodeDataUrl(url))
       .catch(console.error);
-  }, []);
+  }, [result, gifUrl]);
 
   const handleDownloadPNG = () => {
     if (!result) return;

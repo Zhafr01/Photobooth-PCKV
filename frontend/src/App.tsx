@@ -9,15 +9,17 @@ import ResultPage from "./pages/ResultPage";
 import GalleryPage from "./pages/GalleryPage";
 import EducationPage from "./pages/EducationPage";
 import RemoteCameraPage from "./pages/RemoteCameraPage";
+import DownloadPage from "./pages/DownloadPage";
 
 export default function App() {
   const location = useLocation();
   const isRemote = location.pathname.includes("/remote-camera");
+  const isDownload = location.pathname.includes("/download");
 
   return (
     <div className="min-h-screen bg-[#FAF7F2]">
-      {!isRemote && <Navbar />}
-      <div className={isRemote ? "" : "pt-14"}>
+      {!isRemote && !isDownload && <Navbar />}
+      <div className={isRemote || isDownload ? "" : "pt-14"}>
         <AnimatePresence mode="wait">
           <Routes location={location} key={location.pathname}>
             <Route path="/" element={<HomePage />} />
@@ -28,6 +30,7 @@ export default function App() {
             <Route path="/gallery" element={<GalleryPage />} />
             <Route path="/education" element={<EducationPage />} />
             <Route path="/remote-camera" element={<RemoteCameraPage />} />
+            <Route path="/download" element={<DownloadPage />} />
           </Routes>
         </AnimatePresence>
       </div>
