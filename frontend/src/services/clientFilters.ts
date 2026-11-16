@@ -446,6 +446,85 @@ export async function applyClientFilter(
       break;
     }
 
+    // 20. Face Smooth (Box blur — simulates skin smoothing)
+    case "face_smooth": {
+      const strength = Number(params.strength ?? 0.5);
+      const k = Math.max(1, Math.round(strength * 4));
+      const copy = new Uint8ClampedArray(d);
+      for (let y = k; y < h - k; y++) {
+        for (let x = k; x < w - k; x++) {
+          let r = 0, g = 0, b = 0, count = 0;
+          for (let dy = -k; dy <= k; dy++) {
+            for (let dx = -k; dx <= k; dx++) {
+              const p = ((y + dy) * w + (x + dx)) * 4;
+              r += copy[p]; g += copy[p + 1]; b += copy[p + 2]; count++;
+            }
+          }
+          const idx = (y * w + x) * 4;
+          d[idx] = r / count; d[idx + 1] = g / count; d[idx + 2] = b / count;
+        }
+      }
+      break;
+    }
+
+    // 21. Face Brighten (Soft brightness boost)
+    case "face_brighten": {
+      const amount = Number(params.amount ?? 1.2);
+      for (let i = 0; i < d.length; i += 4) {
+        d[i] = Math.min(255, d[i] * amount);
+        d[i + 1] = Math.min(255, d[i + 1] * amount);
+        d[i + 2] = Math.min(255, d[i + 2] * amount);
+      }
+      break;
+    }
+
+    // 22. Face Vignette (Center-brightening reverse vignette)
+    case "face_vignette": {
+      const strength = Number(params.strength ?? 0.7);
+      const cx = w / 2, cy = h / 2;
+      const maxR = Math.hypot(cx, cy);
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const idx = (y * w + x) * 4;
+          const r = Math.hypot(x - cx, y - cy);
+          const edgeDim = strength * (r / maxR) ** 1.5;
+          const factor = Math.max(1 - strength, 1 - edgeDim);
+          d[idx] = Math.min(255, d[idx] * (1 + factor * 0.12));
+          d[idx + 1] = Math.min(255, d[idx + 1] * (1 + factor * 0.12));
+          d[idx + 2] = Math.min(255, d[idx + 2] * (1 + factor * 0.12));
+        }
+      }
+      break;
+    }
+
+    // 23. Face Cartoon (Color quantization + edge lines)
+    case "face_cartoon": {
+      const copy = new Uint8ClampedArray(d);
+      // Edge detection pass
+      const edges = new Uint8Array(w * h);
+      for (let y = 1; y < h - 1; y++) {
+        for (let x = 1; x < w - 1; x++) {
+          const idx = (y * w + x) * 4;
+          const gC = 0.299 * copy[idx] + 0.587 * copy[idx + 1] + 0.114 * copy[idx + 2];
+          const gR = 0.299 * copy[idx + 4] + 0.587 * copy[idx + 5] + 0.114 * copy[idx + 6];
+          const gD = 0.299 * copy[idx + w * 4] + 0.587 * copy[idx + w * 4 + 1] + 0.114 * copy[idx + w * 4 + 2];
+          edges[y * w + x] = Math.hypot(gR - gC, gD - gC) > 18 ? 1 : 0;
+        }
+      }
+      // Quantize colors to 8 levels
+      const step = 32;
+      for (let i = 0; i < d.length; i += 4) {
+        if (edges[i / 4]) {
+          d[i] = d[i + 1] = d[i + 2] = 20; // dark edge
+        } else {
+          d[i] = Math.round(copy[i] / step) * step;
+          d[i + 1] = Math.round(copy[i + 1] / step) * step;
+          d[i + 2] = Math.round(copy[i + 2] / step) * step;
+        }
+      }
+      break;
+    }
+
     default:
       break;
   }

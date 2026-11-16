@@ -34,9 +34,14 @@ const FILTERS: FilterDefinition[] = [
   // Spatial
   { id: "spatial_median", name: "Spatial Median", category: "spatial", categoryLabel: "Spasial", description: "Filter median spasial", params: [], gradientFrom: "#00b894", gradientTo: "#55efc4" },
   { id: "segment_background", name: "Segment Background", category: "spatial", categoryLabel: "Spasial", description: "Segmentasi latar Otsu + morfologi", params: [{ name: "kernel_size", label: "Kernel", type: "range", min: 3, max: 15, step: 2, default: 5 }], gradientFrom: "#0984e3", gradientTo: "#6c5ce7" },
+  // Face
+  { id: "face_smooth", name: "Face Smooth", category: "face", categoryLabel: "Wajah", description: "Haluskan kulit (box blur)", params: [{ name: "strength", label: "Kekuatan", type: "range", min: 0.1, max: 1.0, step: 0.05, default: 0.5 }], gradientFrom: "#fd79a8", gradientTo: "#e84393" },
+  { id: "face_brighten", name: "Face Brighten", category: "face", categoryLabel: "Wajah", description: "Cerahkan wajah (brightness boost)", params: [{ name: "amount", label: "Jumlah", type: "range", min: 1.0, max: 1.5, step: 0.05, default: 1.2 }], gradientFrom: "#fdcb6e", gradientTo: "#e17055" },
+  { id: "face_vignette", name: "Face Vignette", category: "face", categoryLabel: "Wajah", description: "Vignette fokus wajah (center bright)", params: [{ name: "strength", label: "Kekuatan", type: "range", min: 0.3, max: 1.0, step: 0.05, default: 0.7 }], gradientFrom: "#2d3436", gradientTo: "#6c5ce7" },
+  { id: "face_cartoon", name: "Face Cartoon", category: "face", categoryLabel: "Wajah", description: "Kartun: quantisasi warna + edge", params: [], gradientFrom: "#00b894", gradientTo: "#fdcb6e" },
 ];
 
-type Category = "tone" | "frequency" | "artistic" | "spatial";
+type Category = "tone" | "frequency" | "artistic" | "spatial" | "face";
 
 function getDefaultParams(filter: FilterDefinition): Record<string, number | string> {
   const p: Record<string, number | string> = {};
@@ -149,6 +154,7 @@ export default function FilterStudio() {
     { id: "frequency", label: "Frekuensi", emoji: "🌊" },
     { id: "artistic", label: "Artistik", emoji: "🎭" },
     { id: "spatial", label: "Spasial", emoji: "🔬" },
+    { id: "face", label: "Wajah", emoji: "😊" },
   ];
 
   if (!currentPhoto) {

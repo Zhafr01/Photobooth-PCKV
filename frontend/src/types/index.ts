@@ -28,7 +28,7 @@ export interface FilterParam {
 export interface FilterDefinition {
   id: string;
   name: string;
-  category: "tone" | "frequency" | "artistic" | "spatial";
+  category: "tone" | "frequency" | "artistic" | "spatial" | "face";
   categoryLabel: string;
   description: string;
   params: FilterParam[];

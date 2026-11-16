@@ -4,16 +4,28 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Camera, FlipHorizontal, ArrowRight, RotateCcw,
   Upload, SlidersHorizontal, X, Layers, Clock, Video,
-  Smartphone, CheckCircle2, Zap, Maximize, Minimize, RotateCw
+  Smartphone, CheckCircle2, Zap, Maximize, Minimize, RotateCw,
+  RefreshCw, Scan, Usb
 } from "lucide-react";
 import QRCode from "qrcode";
 import Peer from "peerjs";
 import { usePhotobooth } from "../store/photoboothStore";
+import { faceTracker, type FaceBox } from "../services/faceTracker";
 
-type LiveFilter = "normal" | "bw" | "vintage" | "dreamy" | "vignette";
+type LiveFilter =
+  | "normal" | "bw" | "vintage" | "dreamy" | "vignette"
+  | "face_blur_bg" | "face_beauty" | "face_funny";
 type Mode = "single" | "burst3" | "burst4" | "quick";
 
-function applyLiveFilter(ctx: CanvasRenderingContext2D, w: number, h: number, filter: LiveFilter) {
+const FACE_FILTERS: LiveFilter[] = ["face_blur_bg", "face_beauty", "face_funny"];
+
+function applyLiveFilter(
+  ctx: CanvasRenderingContext2D,
+  w: number,
+  h: number,
+  filter: LiveFilter,
+  faceBoxes: FaceBox[] = []
+) {
   if (filter === "normal") return;
   const imgData = ctx.getImageData(0, 0, w, h);
   const d = imgData.data;
@@ -48,16 +60,100 @@ function applyLiveFilter(ctx: CanvasRenderingContext2D, w: number, h: number, fi
         d[idx + 2] *= factor;
       }
     }
+  } else if (filter === "face_blur_bg" && faceBoxes.length > 0) {
+    // Build face mask
+    const mask = new Uint8Array(w * h);
+    for (const fb of faceBoxes) {
+      const pad = 30;
+      const x0 = Math.max(0, Math.floor(fb.x) - pad);
+      const y0 = Math.max(0, Math.floor(fb.y) - pad);
+      const x1 = Math.min(w - 1, Math.floor(fb.x + fb.w) + pad);
+      const y1 = Math.min(h - 1, Math.floor(fb.y + fb.h) + pad);
+      for (let y = y0; y <= y1; y++)
+        for (let x = x0; x <= x1; x++)
+          mask[y * w + x] = 1;
+    }
+    // Box blur background (k=6 passes for strong blur)
+    const copy = new Uint8ClampedArray(d);
+    const k = 8;
+    for (let y = k; y < h - k; y++) {
+      for (let x = k; x < w - k; x++) {
+        if (mask[y * w + x]) continue;
+        let r = 0, g = 0, b = 0, cnt = 0;
+        for (let dy = -k; dy <= k; dy++) {
+          for (let dx = -k; dx <= k; dx++) {
+            const p = ((y + dy) * w + (x + dx)) * 4;
+            r += copy[p]; g += copy[p + 1]; b += copy[p + 2]; cnt++;
+          }
+        }
+        const idx = (y * w + x) * 4;
+        d[idx] = r / cnt; d[idx + 1] = g / cnt; d[idx + 2] = b / cnt;
+      }
+    }
+  } else if (filter === "face_beauty" && faceBoxes.length > 0) {
+    const copy = new Uint8ClampedArray(d);
+    const k = 3;
+    for (const fb of faceBoxes) {
+      const x0 = Math.max(k, Math.floor(fb.x));
+      const y0 = Math.max(k, Math.floor(fb.y));
+      const x1 = Math.min(w - k - 1, Math.floor(fb.x + fb.w));
+      const y1 = Math.min(h - k - 1, Math.floor(fb.y + fb.h));
+      for (let y = y0; y <= y1; y++) {
+        for (let x = x0; x <= x1; x++) {
+          let r = 0, g = 0, b = 0, cnt = 0;
+          for (let dy = -k; dy <= k; dy++) {
+            for (let dx = -k; dx <= k; dx++) {
+              const p = ((y + dy) * w + (x + dx)) * 4;
+              r += copy[p]; g += copy[p + 1]; b += copy[p + 2]; cnt++;
+            }
+          }
+          const idx = (y * w + x) * 4;
+          // Smooth + slightly brighten
+          d[idx] = Math.min(255, r / cnt * 1.07);
+          d[idx + 1] = Math.min(255, g / cnt * 1.07);
+          d[idx + 2] = Math.min(255, b / cnt * 1.07);
+        }
+      }
+    }
+  } else if (filter === "face_funny" && faceBoxes.length > 0) {
+    const copy = new Uint8ClampedArray(d);
+    for (const fb of faceBoxes) {
+      const fcx = fb.x + fb.w / 2;
+      const fcy = fb.y + fb.h / 2;
+      const scale = 1.35;
+      const x0 = Math.max(0, Math.floor(fb.x));
+      const y0 = Math.max(0, Math.floor(fb.y));
+      const x1 = Math.min(w - 1, Math.floor(fb.x + fb.w));
+      const y1 = Math.min(h - 1, Math.floor(fb.y + fb.h));
+      for (let y = y0; y <= y1; y++) {
+        for (let x = x0; x <= x1; x++) {
+          // Sample from scaled-down source (magnify face)
+          const sx = Math.round(fcx + (x - fcx) / scale);
+          const sy = Math.round(fcy + (y - fcy) / scale);
+          if (sx >= 0 && sx < w && sy >= 0 && sy < h) {
+            const src = (sy * w + sx) * 4;
+            const dst = (y * w + x) * 4;
+            d[dst] = copy[src];
+            d[dst + 1] = copy[src + 1];
+            d[dst + 2] = copy[src + 2];
+          }
+        }
+      }
+    }
   }
+
   ctx.putImageData(imgData, 0, 0);
 }
 
 const LIVE_FILTERS: { id: LiveFilter; label: string; emoji: string }[] = [
-  { id: "normal",  label: "Normal",  emoji: "○" },
-  { id: "bw",      label: "B&W",     emoji: "◑" },
-  { id: "vintage", label: "Vintage", emoji: "🎞" },
-  { id: "dreamy",  label: "Dreamy",  emoji: "🌸" },
-  { id: "vignette",label: "Vignette",emoji: "◉" },
+  { id: "normal",       label: "Normal",   emoji: "○" },
+  { id: "bw",           label: "B&W",      emoji: "◑" },
+  { id: "vintage",      label: "Vintage",  emoji: "🎞" },
+  { id: "dreamy",       label: "Dreamy",   emoji: "🌸" },
+  { id: "vignette",     label: "Vignette", emoji: "◉" },
+  { id: "face_blur_bg", label: "Blur BG",  emoji: "🫧" },
+  { id: "face_beauty",  label: "Beauty",   emoji: "✨" },
+  { id: "face_funny",   label: "Funny",    emoji: "🤡" },
 ];
 
 const COUNTDOWN_OPTIONS = [3, 5, 10];
@@ -68,11 +164,14 @@ export default function CameraPage() {
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
   const remoteStreamRef = useRef<MediaStream | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordedChunksRef = useRef<Blob[]>([]);
   const peerRef = useRef<Peer | null>(null);
+  const rafRef = useRef<number | null>(null);
+  const faceBoxesRef = useRef<FaceBox[]>([]);
 
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>(
@@ -81,6 +180,9 @@ export default function CameraPage() {
   const [isMirrored, setIsMirrored] = useState(true);
   const [fitMode, setFitMode] = useState<"cover" | "contain">("cover");
   const [rotation, setRotation] = useState<number>(0);
+
+  // Resolution display
+  const [resolution, setResolution] = useState<string>("");
 
   // Phone Camera WebRTC state
   const [, setBoothPeerId] = useState<string>("");
@@ -97,9 +199,123 @@ export default function CameraPage() {
   const [cameraError, setCameraError] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
+  // Face tracker
+  const [faceBoxes, setFaceBoxes] = useState<FaceBox[]>([]);
+  const [showFaceOverlay, setShowFaceOverlay] = useState(false);
+  const [faceTrackerReady, setFaceTrackerReady] = useState(false);
+  const [faceTrackerLoading, setFaceTrackerLoading] = useState(false);
+
   const targetCount = mode === "single" ? 1 : mode === "burst3" ? 3 : 4;
 
-  /* ── 1. Enumerate Video Devices (Laptop, USB, Capture Card) ── */
+  const needsFaceTracker = FACE_FILTERS.includes(liveFilter) || showFaceOverlay;
+
+  /* ── Face Tracker Init & RAF Loop ── */
+  useEffect(() => {
+    if (!needsFaceTracker) {
+      // Cancel loop if running
+      if (rafRef.current) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+      setFaceBoxes([]);
+      faceBoxesRef.current = [];
+      return;
+    }
+
+    let cancelled = false;
+
+    const initAndRun = async () => {
+      if (!faceTracker.isReady()) {
+        setFaceTrackerLoading(true);
+        const ok = await faceTracker.init();
+        if (!ok || cancelled) { setFaceTrackerLoading(false); return; }
+        setFaceTrackerReady(true);
+        setFaceTrackerLoading(false);
+      } else {
+        setFaceTrackerReady(true);
+      }
+
+      const loop = () => {
+        if (cancelled) return;
+        const video = videoRef.current;
+        if (video && !video.paused) {
+          const boxes = faceTracker.detect(video);
+          faceBoxesRef.current = boxes;
+          setFaceBoxes(boxes);
+        }
+        rafRef.current = requestAnimationFrame(loop);
+      };
+      rafRef.current = requestAnimationFrame(loop);
+    };
+
+    initAndRun();
+
+    return () => {
+      cancelled = true;
+      if (rafRef.current) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+    };
+  }, [needsFaceTracker]);
+
+  /* ── Draw overlay canvas ── */
+  useEffect(() => {
+    const canvas = overlayCanvasRef.current;
+    const video = videoRef.current;
+    if (!canvas || !video) return;
+    if (!showFaceOverlay || faceBoxes.length === 0) {
+      const ctx = canvas.getContext("2d");
+      ctx?.clearRect(0, 0, canvas.width, canvas.height);
+      return;
+    }
+
+    const vw = video.videoWidth || canvas.width;
+    const vh = video.videoHeight || canvas.height;
+    const displayW = video.clientWidth;
+    const displayH = video.clientHeight;
+
+    canvas.width = displayW;
+    canvas.height = displayH;
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.clearRect(0, 0, displayW, displayH);
+
+    const scaleX = displayW / vw;
+    const scaleY = displayH / vh;
+
+    ctx.strokeStyle = "#22c55e";
+    ctx.lineWidth = 2;
+    ctx.shadowColor = "#22c55e";
+    ctx.shadowBlur = 8;
+
+    for (const fb of faceBoxes) {
+      const x = fb.x * scaleX;
+      const y = fb.y * scaleY;
+      const w = fb.w * scaleX;
+      const h = fb.h * scaleY;
+      const r = 10;
+      ctx.beginPath();
+      ctx.moveTo(x + r, y);
+      ctx.lineTo(x + w - r, y);
+      ctx.arcTo(x + w, y, x + w, y + r, r);
+      ctx.lineTo(x + w, y + h - r);
+      ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
+      ctx.lineTo(x + r, y + h);
+      ctx.arcTo(x, y + h, x, y + h - r, r);
+      ctx.lineTo(x, y + r);
+      ctx.arcTo(x, y, x + r, y, r);
+      ctx.closePath();
+      ctx.stroke();
+
+      ctx.font = "11px monospace";
+      ctx.fillStyle = "#22c55e";
+      ctx.fillText("FACE", x + 4, y - 4);
+    }
+  }, [faceBoxes, showFaceOverlay]);
+
+  /* ── 1. Enumerate Video Devices ── */
   const refreshDevices = useCallback(async () => {
     if (!navigator?.mediaDevices?.enumerateDevices) return;
     try {
@@ -114,58 +330,103 @@ export default function CameraPage() {
     }
   }, [selectedDeviceId]);
 
-  /* ── 2. Start Camera Stream (Local Webcam) ── */
+  /* ── 2. Start Camera Stream (Enhanced Quality) ── */
   const startCamera = useCallback(async (deviceIdToUse?: string) => {
     if (!navigator?.mediaDevices?.getUserMedia) {
-      console.warn("navigator.mediaDevices.getUserMedia tidak tersedia (bukan HTTPS/localhost)");
       setCameraError(true);
       return;
     }
 
-    // Hentikan stream webcam lokal yang lama
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach((t) => t.stop());
       localStreamRef.current = null;
     }
 
-    const constraints: MediaStreamConstraints = {
-      video: deviceIdToUse
-        ? { deviceId: { ideal: deviceIdToUse }, width: { ideal: 1920 }, height: { ideal: 1080 } }
-        : { facingMode: "user", width: { ideal: 1920 }, height: { ideal: 1080 } },
-      audio: false,
+    const videoConstraints: MediaTrackConstraints = deviceIdToUse
+      ? {
+          deviceId: { exact: deviceIdToUse },
+          width: { ideal: 3840, min: 1280 },
+          height: { ideal: 2160, min: 720 },
+          frameRate: { ideal: 60, min: 30 },
+        }
+      : {
+          facingMode: "user",
+          width: { ideal: 3840, min: 1280 },
+          height: { ideal: 2160, min: 720 },
+          frameRate: { ideal: 60, min: 30 },
+        };
+
+    const tryGetStream = async (constraints: MediaStreamConstraints): Promise<MediaStream> => {
+      return navigator.mediaDevices.getUserMedia(constraints);
     };
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      let stream: MediaStream;
+      try {
+        stream = await tryGetStream({ video: videoConstraints, audio: false });
+      } catch {
+        console.warn("4K constraints failed, falling back to HD...");
+        stream = await tryGetStream({
+          video: deviceIdToUse
+            ? { deviceId: { exact: deviceIdToUse }, width: { ideal: 1920 }, height: { ideal: 1080 } }
+            : { facingMode: "user", width: { ideal: 1920 }, height: { ideal: 1080 } },
+          audio: false,
+        });
+      }
+
       localStreamRef.current = stream;
 
-      // Pasang ke video element jika tidak sedang tersambung ke HP
+      // Apply advanced camera settings
+      const track = stream.getVideoTracks()[0];
+      if (track) {
+        try {
+          const caps = track.getCapabilities() as Record<string, unknown>;
+          const applySettings: MediaTrackConstraints = {};
+          if (caps.exposureMode) (applySettings as Record<string, unknown>).exposureMode = "continuous";
+          if (caps.whiteBalanceMode) (applySettings as Record<string, unknown>).whiteBalanceMode = "continuous";
+          if (caps.focusMode) (applySettings as Record<string, unknown>).focusMode = "continuous";
+          if (Object.keys(applySettings).length > 0) {
+            await track.applyConstraints(applySettings);
+          }
+        } catch {
+          // Not all cameras support advanced settings
+        }
+      }
+
       if (videoRef.current && !remoteStreamRef.current) {
         videoRef.current.srcObject = stream;
+        videoRef.current.setAttribute("playsinline", "true");
         videoRef.current.onloadedmetadata = () => {
           videoRef.current?.play().catch(console.error);
+          if (videoRef.current) {
+            const vw = videoRef.current.videoWidth;
+            const vh = videoRef.current.videoHeight;
+            const fps = track?.getSettings().frameRate;
+            setResolution(`${vw}×${vh}${fps ? ` • ${Math.round(fps)}fps` : ""}`);
+          }
         };
         videoRef.current.play().catch(console.error);
       }
+
       setCameraError(false);
       refreshDevices();
     } catch (err) {
-      console.warn("Primary camera constraints failed, trying generic video fallback:", err);
+      console.error("Camera completely unavailable:", err);
       try {
-        const fallbackStream = await navigator.mediaDevices.getUserMedia({ video: true });
-        localStreamRef.current = fallbackStream;
-
+        const fallback = await navigator.mediaDevices.getUserMedia({ video: true });
+        localStreamRef.current = fallback;
         if (videoRef.current && !remoteStreamRef.current) {
-          videoRef.current.srcObject = fallbackStream;
-          videoRef.current.onloadedmetadata = () => {
-            videoRef.current?.play().catch(console.error);
-          };
+          videoRef.current.srcObject = fallback;
           videoRef.current.play().catch(console.error);
+          videoRef.current.onloadedmetadata = () => {
+            if (videoRef.current) {
+              setResolution(`${videoRef.current.videoWidth}×${videoRef.current.videoHeight}`);
+            }
+          };
         }
         setCameraError(false);
         refreshDevices();
-      } catch (fallbackErr) {
-        console.error("Camera completely unavailable or permission denied:", fallbackErr);
+      } catch {
         setCameraError(true);
       }
     }
@@ -182,17 +443,19 @@ export default function CameraPage() {
     peer.on("call", (call) => {
       call.answer();
       call.on("stream", (remotePhoneStream) => {
-        // Hentikan webcam lokal agar tidak bentrok
         if (localStreamRef.current) {
           localStreamRef.current.getTracks().forEach((t) => t.stop());
           localStreamRef.current = null;
         }
-
         remoteStreamRef.current = remotePhoneStream;
         if (videoRef.current) {
           videoRef.current.srcObject = remotePhoneStream;
+          videoRef.current.setAttribute("playsinline", "true");
           videoRef.current.onloadedmetadata = () => {
             videoRef.current?.play().catch(console.error);
+            if (videoRef.current) {
+              setResolution(`${videoRef.current.videoWidth}×${videoRef.current.videoHeight} • 📱 HP`);
+            }
           };
           videoRef.current.play().catch(console.error);
         }
@@ -202,7 +465,6 @@ export default function CameraPage() {
       });
     });
 
-    // Generate QR code for phone remote (compatible with GitHub Pages HashRouter)
     const cleanPath = window.location.pathname.endsWith("/")
       ? window.location.pathname
       : `${window.location.pathname}/`;
@@ -218,7 +480,6 @@ export default function CameraPage() {
     };
   }, []);
 
-  // Ensure remote stream is playing whenever phoneConnected is true
   useEffect(() => {
     if (phoneConnected && remoteStreamRef.current && videoRef.current) {
       videoRef.current.srcObject = remoteStreamRef.current;
@@ -226,10 +487,9 @@ export default function CameraPage() {
     }
   }, [phoneConnected]);
 
-  /* ── 4. Lifecycle: Init Camera & Device Listener ── */
+  /* ── 4. Lifecycle ── */
   useEffect(() => {
     let isCancelled = false;
-
     if (!phoneConnected) {
       startCamera(selectedDeviceId || undefined).then(() => {
         if (isCancelled && localStreamRef.current) {
@@ -238,15 +498,12 @@ export default function CameraPage() {
         }
       });
     }
-
     const handleDeviceChange = () => refreshDevices();
     if (navigator?.mediaDevices?.addEventListener) {
       navigator.mediaDevices.addEventListener("devicechange", handleDeviceChange);
     }
-
     return () => {
       isCancelled = true;
-      // PENTING: Hanya hentikan localStream, JANGAN hentikan remoteStream (kamera HP)!
       if (localStreamRef.current) {
         localStreamRef.current.getTracks().forEach((t) => t.stop());
         localStreamRef.current = null;
@@ -267,7 +524,7 @@ export default function CameraPage() {
     localStorage.setItem("pckv_camera_device_id", deviceId);
   };
 
-  /* ── 5. Capture Photo & Video Sesi Recording ── */
+  /* ── 5. Capture Photo ── */
   const capturePhoto = useCallback(() => {
     const video = videoRef.current;
     const canvas = canvasRef.current;
@@ -286,30 +543,18 @@ export default function CameraPage() {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    // Enable high-quality smoothing for sharp captures
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = "high";
 
     ctx.save();
-    // Move to center of canvas
     ctx.translate(outW / 2, outH / 2);
-
-    // Apply rotation
-    if (rotation !== 0) {
-      ctx.rotate((rotation * Math.PI) / 180);
-    }
-
-    // Apply mirror
-    if (isMirrored) {
-      ctx.scale(-1, 1);
-    }
-
-    // Draw video centered
+    if (rotation !== 0) ctx.rotate((rotation * Math.PI) / 180);
+    if (isMirrored) ctx.scale(-1, 1);
     ctx.drawImage(video, -rawW / 2, -rawH / 2, rawW, rawH);
     ctx.restore();
 
-    // Apply active live filter to captured snapshot
-    applyLiveFilter(ctx, canvas.width, canvas.height, liveFilter);
+    // Apply live filter (including face filters using current faceBoxes)
+    applyLiveFilter(ctx, canvas.width, canvas.height, liveFilter, faceBoxesRef.current);
 
     const b64 = canvas.toDataURL("image/png", 1.0).split(",")[1];
     setFlash(true);
@@ -317,7 +562,7 @@ export default function CameraPage() {
     setCapturedPhotos((prev) => [...prev, b64]);
   }, [isMirrored, liveFilter, rotation]);
 
-  // Start MediaRecorder for Video Sesi
+  /* ── 6. Video Recording ── */
   const startRecordingVideo = useCallback(() => {
     const activeStream = remoteStreamRef.current || localStreamRef.current;
     if (!activeStream) return;
@@ -347,16 +592,12 @@ export default function CameraPage() {
     }
   }, []);
 
-  /* ── 7. Shutter Logic (Regular & Quick Mode) ── */
+  /* ── 7. Shutter Logic ── */
   const handleShutter = useCallback(() => {
     if (countdown !== null || capturedPhotos.length >= targetCount) return;
-
-    if (capturedPhotos.length === 0) {
-      startRecordingVideo();
-    }
+    if (capturedPhotos.length === 0) startRecordingVideo();
 
     if (mode === "quick") {
-      // QUICK MODE: Automated 4-shot sequence
       let currentShot = 0;
       const takeNextShot = () => {
         let c = 3;
@@ -372,9 +613,7 @@ export default function CameraPage() {
               setTimeout(takeNextShot, 1200);
             } else {
               stopRecordingVideo();
-              setTimeout(() => {
-                navigate("/photostrip");
-              }, 1500);
+              setTimeout(() => navigate("/photostrip"), 1500);
             }
           } else {
             setCountdown(c);
@@ -385,7 +624,6 @@ export default function CameraPage() {
       return;
     }
 
-    // Regular Mode
     let c = countdownSecs;
     setCountdown(c);
     const id = setInterval(() => {
@@ -394,9 +632,7 @@ export default function CameraPage() {
         clearInterval(id);
         setCountdown(null);
         capturePhoto();
-        if (capturedPhotos.length + 1 >= targetCount) {
-          stopRecordingVideo();
-        }
+        if (capturedPhotos.length + 1 >= targetCount) stopRecordingVideo();
       } else {
         setCountdown(c);
       }
@@ -430,6 +666,27 @@ export default function CameraPage() {
     navigate("/studio");
   };
 
+  // Camera source label
+  const cameraSourceLabel = phoneConnected
+    ? "📱 HP Wireless"
+    : devices.find((d) => d.deviceId === selectedDeviceId)?.label?.toLowerCase().includes("external")
+    ? "🎥 External"
+    : selectedDeviceId
+    ? "💻 Kamera Aktif"
+    : "💻 Laptop Cam";
+
+  // CSS filter for video element (non-face filters)
+  const videoCssFilter =
+    liveFilter === "bw"
+      ? "grayscale(100%) contrast(110%)"
+      : liveFilter === "vintage"
+      ? "sepia(60%) contrast(115%) brightness(95%)"
+      : liveFilter === "dreamy"
+      ? "brightness(110%) saturate(125%) contrast(95%)"
+      : liveFilter === "face_beauty"
+      ? "brightness(105%) contrast(103%)"
+      : "none";
+
   return (
     <motion.div
       initial={{ opacity: 0 }}
@@ -438,7 +695,7 @@ export default function CameraPage() {
       className="relative w-full bg-black overflow-hidden"
       style={{ height: "calc(100vh - 56px)" }}
     >
-      {/* ── Native Camera Video Element (Hardware-Accelerated Viewfinder) ── */}
+      {/* ── Video Viewfinder ── */}
       <video
         ref={videoRef}
         playsInline
@@ -452,38 +709,39 @@ export default function CameraPage() {
           maxHeight: rotation % 180 !== 0 ? "100vw" : "100%",
           objectFit: fitMode === "cover" ? "cover" : "contain",
           transform: `translate(-50%, -50%) rotate(${rotation}deg) ${isMirrored ? "scaleX(-1)" : ""}`,
-          filter:
-            liveFilter === "bw"
-              ? "grayscale(100%) contrast(110%)"
-              : liveFilter === "vintage"
-              ? "sepia(60%) contrast(115%) brightness(95%)"
-              : liveFilter === "dreamy"
-              ? "brightness(110%) saturate(125%) contrast(95%)"
-              : "none",
+          filter: videoCssFilter,
         }}
       />
 
-      {/* Vignette Overlay for Live View */}
+      {/* ── Face Overlay Canvas ── */}
+      <canvas
+        ref={overlayCanvasRef}
+        className="absolute top-1/2 left-1/2 pointer-events-none z-10"
+        style={{
+          width: rotation % 180 !== 0 ? "calc(100vh - 56px)" : "100%",
+          height: rotation % 180 !== 0 ? "100vw" : "100%",
+          transform: `translate(-50%, -50%) rotate(${rotation}deg) ${isMirrored ? "scaleX(-1)" : ""}`,
+          opacity: showFaceOverlay ? 1 : 0,
+        }}
+      />
+
+      {/* Vignette Overlay */}
       {liveFilter === "vignette" && (
         <div
           className="absolute inset-0 pointer-events-none z-10"
-          style={{
-            background: "radial-gradient(circle at center, transparent 40%, rgba(0, 0, 0, 0.75) 100%)",
-          }}
+          style={{ background: "radial-gradient(circle at center, transparent 40%, rgba(0,0,0,0.75) 100%)" }}
         />
       )}
 
-      {/* Off-screen canvas used exclusively for snapshot captures */}
+      {/* Off-screen canvas for snapshots */}
       <canvas ref={canvasRef} className="hidden" />
 
-      {/* Flash overlay */}
+      {/* Flash */}
       <AnimatePresence>
         {flash && (
           <motion.div
             className="absolute inset-0 bg-white z-30 pointer-events-none"
-            initial={{ opacity: 0.9 }}
-            animate={{ opacity: 0 }}
-            exit={{ opacity: 0 }}
+            initial={{ opacity: 0.9 }} animate={{ opacity: 0 }} exit={{ opacity: 0 }}
             transition={{ duration: 0.18 }}
           />
         )}
@@ -496,24 +754,19 @@ export default function CameraPage() {
           <h2 className="text-white text-xl font-bold">Kamera Tidak Terdeteksi / Izin Diblokir</h2>
           <p className="text-gray-400 text-sm max-w-md">
             {!navigator?.mediaDevices?.getUserMedia
-              ? "Browser memblokir kamera karena dibuka via IP HTTP lokal (Not Secure). Buka website langsung menggunakan http://localhost:5173/PhotoboothPCKV/camera di laptop Anda."
-              : "Pastikan webcam laptop atau kamera eksternal (USB/HP/Capture Card) sudah terpasang dan izin kamera diizinkan."}
+              ? "Browser memblokir kamera karena dibuka via IP HTTP lokal. Buka melalui http://localhost:5173"
+              : "Pastikan webcam laptop atau kamera eksternal sudah terpasang dan izin kamera diizinkan."}
           </p>
           <div className="flex flex-wrap justify-center gap-3">
             {window.location.hostname !== "localhost" && (
               <button
-                onClick={() => {
-                  window.location.href = window.location.href.replace(window.location.hostname, "localhost");
-                }}
+                onClick={() => { window.location.href = window.location.href.replace(window.location.hostname, "localhost"); }}
                 className="px-5 py-2.5 bg-rose-600 rounded-2xl text-white font-medium hover:bg-rose-700"
               >
                 Buka via Localhost
               </button>
             )}
-            <button
-              onClick={() => setShowPhoneModal(true)}
-              className="flex items-center gap-2 px-5 py-2.5 bg-white/10 rounded-2xl text-white font-medium hover:bg-white/20"
-            >
+            <button onClick={() => setShowPhoneModal(true)} className="flex items-center gap-2 px-5 py-2.5 bg-white/10 rounded-2xl text-white font-medium hover:bg-white/20">
               <Smartphone size={18} /> Sambungkan Kamera HP
             </button>
             <label className="flex items-center gap-2 px-5 py-2.5 bg-white/10 rounded-2xl text-white font-medium cursor-pointer hover:bg-white/20">
@@ -524,14 +777,24 @@ export default function CameraPage() {
         </div>
       )}
 
-      {/* Top-Left: Shot counter & Camera source indicator */}
-      <div className="absolute top-4 left-4 z-20 flex items-center gap-2">
+      {/* Top-Left: Shot counter + resolution + status */}
+      <div className="absolute top-4 left-4 z-20 flex items-center gap-2 flex-wrap">
         <div className="bg-black/60 backdrop-blur-sm text-white text-xs font-mono px-3 py-1.5 rounded-full border border-white/10">
           {mode === "quick" ? "⚡ QUICK MODE" : `${capturedPhotos.length} / ${targetCount} FOTO`}
         </div>
+        {resolution && (
+          <div className="bg-black/50 backdrop-blur-sm text-gray-300 text-xs font-mono px-2.5 py-1 rounded-full border border-white/10">
+            {resolution}
+          </div>
+        )}
         {phoneConnected && (
           <div className="bg-emerald-600/90 text-white text-xs font-medium px-3 py-1.5 rounded-full flex items-center gap-1.5">
             <Smartphone size={13} /> HP Terhubung
+          </div>
+        )}
+        {faceBoxes.length > 0 && needsFaceTracker && (
+          <div className="bg-green-600/80 text-white text-xs font-medium px-2.5 py-1 rounded-full flex items-center gap-1">
+            <Scan size={11} /> {faceBoxes.length} wajah
           </div>
         )}
       </div>
@@ -564,7 +827,7 @@ export default function CameraPage() {
           className={`w-10 h-10 rounded-full backdrop-blur-sm text-white flex items-center justify-center transition-colors border border-white/10 ${
             rotation !== 0 ? "bg-rose-600" : "bg-black/60 hover:bg-black/80"
           }`}
-          title={`Putar Kamera (Saat ini: ${rotation}°)`}
+          title={`Putar Kamera (${rotation}°)`}
         >
           <RotateCw size={18} />
         </button>
@@ -574,7 +837,7 @@ export default function CameraPage() {
           className={`w-10 h-10 rounded-full backdrop-blur-sm text-white flex items-center justify-center transition-colors border border-white/10 ${
             fitMode === "contain" ? "bg-rose-600" : "bg-black/60 hover:bg-black/80"
           }`}
-          title={fitMode === "cover" ? "Mode: Penuh (Zoom)" : "Mode: Pas (Tanpa Zoom)"}
+          title={fitMode === "cover" ? "Mode: Penuh" : "Mode: Pas"}
         >
           {fitMode === "cover" ? <Maximize size={18} /> : <Minimize size={18} />}
         </button>
@@ -590,48 +853,112 @@ export default function CameraPage() {
         </button>
       </div>
 
-      {/* Right Sidebar: Settings & Camera Selector */}
+      {/* ── Right Sidebar ── */}
       <AnimatePresence>
         {sidebarOpen && (
           <motion.div
-            initial={{ x: 280, opacity: 0 }}
+            initial={{ x: 288, opacity: 0 }}
             animate={{ x: 0, opacity: 1 }}
-            exit={{ x: 280, opacity: 0 }}
+            exit={{ x: 288, opacity: 0 }}
             transition={{ type: "spring", stiffness: 320, damping: 32 }}
-            className="absolute top-0 right-0 h-full w-72 z-20 bg-black/85 backdrop-blur-md flex flex-col gap-5 p-5 pt-20 border-l border-white/10 overflow-y-auto"
+            className="absolute top-0 right-0 h-full w-72 z-20 bg-black/90 backdrop-blur-md flex flex-col gap-4 p-5 pt-20 border-l border-white/10 overflow-y-auto"
           >
-            {/* Camera Selector */}
+            {/* ── Camera Connect Section ── */}
             <div>
               <p className="flex items-center gap-1.5 text-xs text-gray-300 font-semibold uppercase tracking-wider mb-2">
-                <Video size={13} className="text-rose-500" /> Sumber Kamera
+                <Video size={13} className="text-rose-500" /> Koneksi Kamera
               </p>
-              <select
-                value={phoneConnected ? "phone" : selectedDeviceId}
-                onChange={(e) => {
-                  if (e.target.value === "phone") {
-                    setShowPhoneModal(true);
-                  } else {
-                    handleSelectCamera(e.target.value);
-                  }
-                }}
-                className="w-full bg-white/10 text-white text-xs rounded-xl p-2.5 border border-white/20 focus:outline-none focus:border-rose-500"
-              >
-                {phoneConnected && <option value="phone" className="bg-gray-900 text-emerald-400">📱 Kamera HP (Wireless)</option>}
-                {devices.map((device, idx) => (
-                  <option key={device.deviceId} value={device.deviceId} className="bg-gray-900 text-white">
-                    {device.label || `Kamera ${idx + 1}`}
-                  </option>
-                ))}
-              </select>
+
+              {/* Status badge */}
+              <div className="mb-2 px-2.5 py-1.5 bg-white/5 border border-white/10 rounded-xl flex items-center gap-2">
+                <span className="text-xs text-gray-400">Sumber aktif:</span>
+                <span className="text-xs font-semibold text-white">{cameraSourceLabel}</span>
+              </div>
+
+              {/* Device dropdown + refresh */}
+              <div className="flex gap-1.5 mb-2">
+                <select
+                  value={phoneConnected ? "phone" : selectedDeviceId}
+                  onChange={(e) => {
+                    if (e.target.value === "phone") setShowPhoneModal(true);
+                    else handleSelectCamera(e.target.value);
+                  }}
+                  className="flex-1 bg-white/10 text-white text-xs rounded-xl p-2.5 border border-white/20 focus:outline-none focus:border-rose-500"
+                >
+                  {phoneConnected && <option value="phone" className="bg-gray-900 text-emerald-400">📱 Kamera HP (Wireless)</option>}
+                  {devices.map((device, idx) => (
+                    <option key={device.deviceId} value={device.deviceId} className="bg-gray-900 text-white">
+                      {device.label || `Kamera ${idx + 1}`}
+                    </option>
+                  ))}
+                  {devices.length === 0 && <option disabled className="bg-gray-900 text-gray-500">Tidak ada kamera terdeteksi</option>}
+                </select>
+                <button
+                  onClick={refreshDevices}
+                  className="w-9 h-9 flex items-center justify-center bg-white/10 hover:bg-white/20 text-white rounded-xl transition-colors flex-shrink-0"
+                  title="Refresh daftar kamera"
+                >
+                  <RefreshCw size={14} />
+                </button>
+              </div>
+
+              {/* HP Wireless */}
               <button
                 onClick={() => setShowPhoneModal(true)}
-                className="mt-2 w-full py-2 bg-white/10 hover:bg-white/20 text-white text-xs rounded-xl font-medium flex items-center justify-center gap-1.5 transition-colors"
+                className={`w-full py-2 rounded-xl text-xs font-medium flex items-center justify-center gap-1.5 transition-colors mb-1.5 ${
+                  phoneConnected
+                    ? "bg-emerald-600/80 text-white hover:bg-emerald-600"
+                    : "bg-white/10 hover:bg-white/20 text-white"
+                }`}
               >
-                <Smartphone size={14} className="text-rose-400" /> Hubungkan Kamera HP
+                <Smartphone size={14} className={phoneConnected ? "text-white" : "text-rose-400"} />
+                {phoneConnected ? "✓ HP Terhubung (Klik untuk info)" : "📱 Sambungkan HP (WiFi)"}
               </button>
+
+              {/* USB/Capture Card info */}
+              <div className="bg-white/5 border border-white/10 rounded-xl p-2.5">
+                <p className="flex items-center gap-1.5 text-xs text-gray-300 font-semibold mb-1">
+                  <Usb size={12} className="text-blue-400" /> USB / Capture Card
+                </p>
+                <p className="text-xs text-gray-500 leading-relaxed">
+                  Pasang <strong className="text-gray-300">DroidCam</strong> atau <strong className="text-gray-300">Iriun Webcam</strong> di HP + PC, lalu hubungkan via USB — kamera muncul otomatis di dropdown.
+                </p>
+              </div>
             </div>
 
-            {/* Mode Selector (Single, Burst, Quick Mode) */}
+            {/* ── Face Tracker Section ── */}
+            <div>
+              <p className="flex items-center gap-1.5 text-xs text-gray-300 font-semibold uppercase tracking-wider mb-2">
+                <Scan size={13} className="text-rose-500" /> Face Tracker
+              </p>
+              <div className="bg-white/5 border border-white/10 rounded-xl p-3 flex flex-col gap-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-gray-300">Overlay Deteksi Wajah</span>
+                  <button
+                    onClick={() => setShowFaceOverlay((p) => !p)}
+                    className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all ${
+                      showFaceOverlay ? "bg-green-600 text-white" : "bg-white/10 text-gray-400 hover:bg-white/20"
+                    }`}
+                  >
+                    {showFaceOverlay ? "ON" : "OFF"}
+                  </button>
+                </div>
+                {faceTrackerLoading && (
+                  <p className="text-xs text-yellow-400 flex items-center gap-1.5">
+                    <span className="animate-spin inline-block">⟳</span> Memuat model AI...
+                  </p>
+                )}
+                {faceTrackerReady && faceBoxes.length > 0 && (
+                  <p className="text-xs text-green-400">✓ {faceBoxes.length} wajah terdeteksi</p>
+                )}
+                {faceTrackerReady && faceBoxes.length === 0 && showFaceOverlay && (
+                  <p className="text-xs text-gray-500">Tidak ada wajah di frame</p>
+                )}
+                <p className="text-xs text-gray-600">Filter Blur BG, Beauty & Funny memerlukan face tracker aktif.</p>
+              </div>
+            </div>
+
+            {/* ── Mode Selector ── */}
             <div>
               <p className="flex items-center gap-1.5 text-xs text-gray-300 font-semibold uppercase tracking-wider mb-2">
                 <Layers size={13} className="text-rose-500" /> Mode Foto
@@ -645,14 +972,9 @@ export default function CameraPage() {
                 ].map((m) => (
                   <button
                     key={m.id}
-                    onClick={() => {
-                      setMode(m.id as Mode);
-                      setCapturedPhotos([]);
-                    }}
+                    onClick={() => { setMode(m.id as Mode); setCapturedPhotos([]); }}
                     className={`py-2 px-3 rounded-xl text-xs font-medium text-left transition-all ${
-                      mode === m.id
-                        ? "bg-rose-600 text-white"
-                        : "bg-white/10 text-gray-300 hover:bg-white/20"
+                      mode === m.id ? "bg-rose-600 text-white" : "bg-white/10 text-gray-300 hover:bg-white/20"
                     }`}
                   >
                     {m.label}
@@ -661,7 +983,7 @@ export default function CameraPage() {
               </div>
             </div>
 
-            {/* Timer Selector */}
+            {/* ── Timer ── */}
             {mode !== "quick" && (
               <div>
                 <p className="flex items-center gap-1.5 text-xs text-gray-300 font-semibold uppercase tracking-wider mb-2">
@@ -673,9 +995,7 @@ export default function CameraPage() {
                       key={s}
                       onClick={() => setCountdownSecs(s)}
                       className={`flex-1 py-2 rounded-xl text-xs font-medium transition-all ${
-                        countdownSecs === s
-                          ? "bg-rose-600 text-white"
-                          : "bg-white/10 text-gray-300 hover:bg-white/20"
+                        countdownSecs === s ? "bg-rose-600 text-white" : "bg-white/10 text-gray-300 hover:bg-white/20"
                       }`}
                     >
                       {s}s
@@ -685,7 +1005,7 @@ export default function CameraPage() {
               </div>
             )}
 
-            {/* Fallback upload */}
+            {/* ── Upload ── */}
             <div className="mt-auto pt-4 border-t border-white/10">
               <label className="flex items-center justify-center gap-2 py-2.5 w-full rounded-xl bg-white/10 text-gray-200 text-xs font-medium cursor-pointer hover:bg-white/20 transition-colors">
                 <Upload size={15} /> Unggah Berkas Foto
@@ -696,25 +1016,29 @@ export default function CameraPage() {
         )}
       </AnimatePresence>
 
-      {/* Bottom Center: Live Filter Overlay Pill */}
+      {/* ── Live Filter Pills ── */}
       <div className="absolute bottom-28 left-0 right-0 z-20 flex justify-center pointer-events-none">
-        <div className="pointer-events-auto flex items-center gap-1.5 bg-black/60 backdrop-blur-md rounded-full p-1.5 border border-white/10 shadow-lg">
+        <div className="pointer-events-auto flex items-center gap-1 bg-black/70 backdrop-blur-md rounded-full p-1.5 border border-white/10 shadow-lg overflow-x-auto max-w-[90vw]">
           {LIVE_FILTERS.map((f) => (
             <button
               key={f.id}
               onClick={() => setLiveFilter(f.id)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
+              className={`flex items-center gap-1 px-2.5 py-1.5 rounded-full text-xs font-medium transition-all flex-shrink-0 ${
                 liveFilter === f.id ? "bg-rose-600 text-white shadow-sm" : "text-gray-300 hover:bg-white/10"
               }`}
+              title={FACE_FILTERS.includes(f.id) ? `${f.label} (Face Filter)` : f.label}
             >
               <span className="text-sm">{f.emoji}</span>
-              <span>{f.label}</span>
+              <span className="hidden sm:inline">{f.label}</span>
+              {FACE_FILTERS.includes(f.id) && (
+                <span className="text-[9px] opacity-60 hidden sm:inline">AI</span>
+              )}
             </button>
           ))}
         </div>
       </div>
 
-      {/* Countdown Big Overlay */}
+      {/* ── Countdown Overlay ── */}
       <AnimatePresence>
         {countdown !== null && (
           <motion.div
@@ -732,7 +1056,7 @@ export default function CameraPage() {
         )}
       </AnimatePresence>
 
-      {/* Bottom Shutter Button */}
+      {/* ── Shutter Button ── */}
       <div className="absolute bottom-6 left-0 right-0 z-20 flex justify-center">
         <button
           onClick={handleShutter}
@@ -744,7 +1068,7 @@ export default function CameraPage() {
         </button>
       </div>
 
-      {/* Thumbnail Strip */}
+      {/* ── Thumbnail Strip ── */}
       <AnimatePresence>
         {capturedPhotos.length > 0 && mode !== "quick" && (
           <motion.div
@@ -765,27 +1089,17 @@ export default function CameraPage() {
                   />
                 ))}
                 {Array.from({ length: Math.max(0, targetCount - capturedPhotos.length) }).map((_, i) => (
-                  <div
-                    key={`empty-${i}`}
-                    className="h-14 w-14 rounded-lg border-2 border-dashed border-white/20 flex-shrink-0 flex items-center justify-center"
-                  >
+                  <div key={`empty-${i}`} className="h-14 w-14 rounded-lg border-2 border-dashed border-white/20 flex-shrink-0 flex items-center justify-center">
                     <Camera size={16} className="text-white/30" />
                   </div>
                 ))}
               </div>
-
               <div className="flex gap-2 flex-shrink-0">
-                <button
-                  onClick={handleRetake}
-                  className="flex items-center gap-1.5 px-3 py-2 bg-white/10 rounded-xl text-xs font-medium text-white hover:bg-white/20 transition-colors"
-                >
+                <button onClick={handleRetake} className="flex items-center gap-1.5 px-3 py-2 bg-white/10 rounded-xl text-xs font-medium text-white hover:bg-white/20 transition-colors">
                   <RotateCcw size={14} /> Ulang
                 </button>
                 {capturedPhotos.length >= targetCount && (
-                  <button
-                    onClick={handleProceed}
-                    className="flex items-center gap-1.5 px-4 py-2 bg-rose-600 rounded-xl text-xs font-semibold text-white hover:bg-rose-700 transition-colors shadow-sm"
-                  >
+                  <button onClick={handleProceed} className="flex items-center gap-1.5 px-4 py-2 bg-rose-600 rounded-xl text-xs font-semibold text-white hover:bg-rose-700 transition-colors shadow-sm">
                     Lanjut ke Studio <ArrowRight size={14} />
                   </button>
                 )}
@@ -795,7 +1109,7 @@ export default function CameraPage() {
         )}
       </AnimatePresence>
 
-      {/* Modal: Phone as External Camera Connector */}
+      {/* ── Phone Modal ── */}
       <AnimatePresence>
         {showPhoneModal && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
@@ -805,13 +1119,9 @@ export default function CameraPage() {
               exit={{ scale: 0.9, opacity: 0 }}
               className="bg-gray-900 border border-white/10 text-white rounded-3xl max-w-md w-full p-6 relative"
             >
-              <button
-                onClick={() => setShowPhoneModal(false)}
-                className="absolute top-4 right-4 text-gray-400 hover:text-white p-2"
-              >
+              <button onClick={() => setShowPhoneModal(false)} className="absolute top-4 right-4 text-gray-400 hover:text-white p-2">
                 <X size={20} />
               </button>
-
               <div className="flex items-center gap-2 mb-2 text-rose-500 font-semibold text-sm">
                 <Smartphone size={18} /> Sambungkan Kamera HP
               </div>
@@ -828,9 +1138,7 @@ export default function CameraPage() {
                   {phoneQrUrl ? (
                     <img src={phoneQrUrl} alt="QR Code Kamera HP" className="w-48 h-48 rounded-xl bg-white p-2" />
                   ) : (
-                    <div className="w-48 h-48 flex items-center justify-center text-xs text-gray-400">
-                      Membuat QR Code...
-                    </div>
+                    <div className="w-48 h-48 flex items-center justify-center text-xs text-gray-400">Membuat QR Code...</div>
                   )}
                   <p className="text-xs text-gray-300 text-center mt-3">
                     Scan QR Code ini menggunakan kamera smartphone Anda. Kamera HP akan otomatis tersambung ke layar booth.
@@ -838,7 +1146,7 @@ export default function CameraPage() {
                 </div>
               )}
 
-              <div className="bg-white/5 p-3 rounded-xl text-xs text-gray-400 space-y-1">
+              <div className="bg-white/5 p-3 rounded-xl text-xs text-gray-400 space-y-1 mb-4">
                 <p className="font-semibold text-white">Alternatif Kabel USB (0-Latency HD):</p>
                 <p>1. Pasang aplikasi <strong>DroidCam</strong> atau <strong>Iriun Webcam</strong> di HP dan PC.</p>
                 <p>2. Hubungkan HP via USB, kamera HP akan langsung muncul di dropdown <em>Sumber Kamera</em>.</p>
@@ -846,7 +1154,7 @@ export default function CameraPage() {
 
               <button
                 onClick={() => setShowPhoneModal(false)}
-                className="mt-4 w-full py-3 bg-rose-600 rounded-xl text-sm font-semibold text-white hover:bg-rose-700 transition-colors"
+                className="w-full py-3 bg-rose-600 rounded-xl text-sm font-semibold text-white hover:bg-rose-700 transition-colors"
               >
                 {phoneConnected ? "Gunakan Kamera HP Ini" : "Tutup"}
               </button>
