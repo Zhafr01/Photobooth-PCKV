@@ -24,19 +24,30 @@ export default function RemoteCameraPage() {
   const switchCamera = useCallback(async (newFacing?: "environment" | "user") => {
     const nextFacing = newFacing || (facingModeRef.current === "environment" ? "user" : "environment");
     try {
-      const newStream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: nextFacing,
-          width: { ideal: 1920 },
-          height: { ideal: 1080 },
-        },
-        audio: false,
-      });
-
-      // Stop old tracks
+      // 1. MUST stop existing stream tracks FIRST so hardware releases camera
       if (streamRef.current) {
         streamRef.current.getTracks().forEach((t) => t.stop());
+        streamRef.current = null;
       }
+
+      // 2. Request new facing mode with fallback
+      let newStream: MediaStream;
+      try {
+        newStream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: { ideal: nextFacing },
+            width: { ideal: 1920 },
+            height: { ideal: 1080 },
+          },
+          audio: false,
+        });
+      } catch {
+        newStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: nextFacing },
+          audio: false,
+        });
+      }
+
       streamRef.current = newStream;
 
       if (videoRef.current) {
@@ -45,8 +56,14 @@ export default function RemoteCameraPage() {
       }
 
       setFacingMode(nextFacing);
+      facingModeRef.current = nextFacing;
 
-      // Seamlessly replace the WebRTC video track without dropping the call
+      // 3. Notify booth via data channel
+      if (connRef.current && connRef.current.open) {
+        connRef.current.send({ type: "FACING_CHANGED", facingMode: nextFacing });
+      }
+
+      // 4. Seamlessly replace the WebRTC video track without dropping the call
       const newTrack = newStream.getVideoTracks()[0];
       const senders = (callRef.current as any)?.peerConnection?.getSenders?.() as RTCRtpSender[] | undefined;
       const videoSender = senders?.find((s) => s.track?.kind === "video");
@@ -59,6 +76,7 @@ export default function RemoteCameraPage() {
       }
     } catch (err) {
       console.warn("Gagal mengganti kamera HP:", err);
+      setStatusMessage("Gagal mengganti kamera. Pastikan izin kamera aktif.");
     }
   }, [targetPeerId]);
 
@@ -183,7 +201,7 @@ export default function RemoteCameraPage() {
       </div>
 
       {/* Live Camera Viewfinder */}
-      <div className="w-full flex-1 my-4 flex items-center justify-center relative overflow-hidden rounded-2xl border border-white/10 bg-gray-950">
+      <div className="w-full flex-1 my-3 flex items-center justify-center relative overflow-hidden rounded-2xl border border-white/10 bg-gray-950">
         <video
           ref={videoRef}
           autoPlay
@@ -191,23 +209,33 @@ export default function RemoteCameraPage() {
           muted
           className={`w-full h-full object-cover ${facingMode === "user" ? "scale-x-[-1]" : ""}`}
         />
-        <div className="absolute bottom-4 left-4 bg-black/60 backdrop-blur-sm text-xs font-mono px-3 py-1 rounded-full text-gray-300">
-          {facingMode === "environment" ? "📷 Belakang (HD)" : "🤳 Depan"}
+        <div className="absolute top-4 left-4 bg-black/70 backdrop-blur-md text-xs font-mono px-3 py-1.5 rounded-full text-white border border-white/10 flex items-center gap-1.5">
+          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+          {facingMode === "environment" ? "📷 Kamera Belakang (HD)" : "🤳 Kamera Depan (Selfie)"}
         </div>
 
         {/* Floating Flip Button on Phone Screen for easy thumb tap */}
         <button
           onClick={() => switchCamera()}
-          className="absolute bottom-4 right-4 bg-rose-600/90 hover:bg-rose-600 active:scale-90 text-white p-3 rounded-full shadow-lg backdrop-blur-sm transition-all"
+          className="absolute bottom-4 right-4 bg-rose-600 hover:bg-rose-700 active:scale-90 text-white p-3.5 rounded-full shadow-2xl backdrop-blur-sm transition-all border border-white/20"
           title="Ganti Kamera"
         >
-          <FlipHorizontal size={20} />
+          <FlipHorizontal size={22} />
         </button>
       </div>
 
-      {/* Footer info */}
-      <div className="text-center text-xs text-gray-400 pb-2">
-        Arahkan kamera ke subjek foto. Layar booth akan menampilkan live preview secara langsung.
+      {/* Primary Thumb Switch Button */}
+      <div className="w-full max-w-md pb-2">
+        <button
+          onClick={() => switchCamera()}
+          className="w-full py-3.5 bg-rose-600 hover:bg-rose-700 active:scale-95 text-white font-bold text-sm rounded-2xl shadow-xl flex items-center justify-center gap-2 transition-all border border-rose-500"
+        >
+          <FlipHorizontal size={20} />
+          <span>Pindah ke Kamera {facingMode === "environment" ? "Depan (Selfie)" : "Belakang (HD)"}</span>
+        </button>
+        <p className="text-center text-[11px] text-gray-400 mt-2">
+          Arahkan HP ke subjek foto. Layar booth akan menampilkan live preview secara langsung.
+        </p>
       </div>
     </div>
   );

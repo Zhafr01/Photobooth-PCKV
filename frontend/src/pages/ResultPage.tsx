@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { motion } from "framer-motion";
 import { useNavigate } from "react-router-dom";
 import { usePhotobooth } from "../store/photoboothStore";
@@ -24,10 +24,34 @@ export default function ResultPage() {
   const photos = state.filteredPhotos.length > 0 ? state.filteredPhotos : state.capturedPhotos;
   const sessionVideo = state.sessionVideoUrl;
 
-  // 1. Generate GIF Boomerang Animation (Bagian 14.1 PDF)
+  const lastGenPhotosRef = useRef<string>("");
+  const lastSavedStripRef = useRef<string>("");
+
+  // 0. Auto-save Photostrip to Gallery
   useEffect(() => {
-    if (!gifUrl && photos.length > 0) {
+    if (result && lastSavedStripRef.current !== result) {
+      lastSavedStripRef.current = result;
+      dispatch({
+        type: "ADD_GALLERY_ITEM",
+        payload: {
+          id: `strip-${Date.now()}`,
+          thumbnail: result,
+          fullImage: result,
+          createdAt: new Date().toISOString(),
+          filters: state.activeFilters,
+          itemType: "strip",
+        },
+      });
+    }
+  }, [result, dispatch, state.activeFilters]);
+
+  // 1. Generate GIF Boomerang Animation (Bagian 14.1 PDF) - Always fresh per session
+  const sessionKey = photos.map((p, i) => `${i}:${p.slice(0, 36)}`).join("|");
+  useEffect(() => {
+    if (photos.length > 0 && lastGenPhotosRef.current !== sessionKey) {
+      lastGenPhotosRef.current = sessionKey;
       setGifGenerating(true);
+      setGifUrl(null);
 
       // Normalize all photos to same size (480×360) before making GIF
       // This prevents gifshot from failing when photos have different aspect ratios
@@ -83,7 +107,7 @@ export default function ResultPage() {
           setGifGenerating(false);
         });
     }
-  }, [photos, gifUrl, dispatch]);
+  }, [photos, sessionKey, dispatch]);
 
   // 2. Upload photostrip to backend → generate QR Code pointing to download URL
   useEffect(() => {
@@ -308,6 +332,13 @@ export default function ResultPage() {
           className="flex items-center gap-2 px-5 py-2.5 bg-white border border-rose-600 text-rose-600 rounded-xl text-xs font-semibold hover:bg-rose-50 active:scale-95 transition-all"
         >
           <Edit3 size={16} /> Edit Posisi & Frame
+        </button>
+
+        <button
+          onClick={() => navigate("/gallery")}
+          className="flex items-center gap-2 px-5 py-2.5 bg-white border border-gray-300 text-gray-800 rounded-xl text-xs font-semibold hover:border-gray-400 active:scale-95 transition-all shadow-xs"
+        >
+          <Image size={16} className="text-rose-600" /> Buka Galeri Sesi
         </button>
 
         <button

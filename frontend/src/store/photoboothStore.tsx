@@ -35,11 +35,31 @@ type Action =
   | { type: "SET_CAPTION"; payload: string }
   | { type: "ADD_GALLERY_ITEM"; payload: GalleryItem }
   | { type: "REMOVE_GALLERY_ITEM"; payload: string }
+  | { type: "CLEAR_GALLERY" }
   | { type: "SET_PHOTOSTRIP_RESULT"; payload: string | null }
   | { type: "SET_SESSION_VIDEO"; payload: string | null }
   | { type: "SET_SESSION_GIF"; payload: string | null }
   | { type: "SET_PHOTO_ADJUSTMENT"; payload: { zoom?: number; offsetX?: number; offsetY?: number } }
   | { type: "RESET" };
+
+// Load & save gallery items to localStorage
+const getInitialGallery = (): GalleryItem[] => {
+  try {
+    const raw = localStorage.getItem("pckv_session_gallery");
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+};
+
+const saveGallery = (items: GalleryItem[]) => {
+  try {
+    // Keep max 25 items so localStorage doesn't overflow
+    localStorage.setItem("pckv_session_gallery", JSON.stringify(items.slice(0, 25)));
+  } catch (e) {
+    console.warn("Failed to persist gallery:", e);
+  }
+};
 
 const initialState: PhotoboothState = {
   capturedPhotos: [],
@@ -50,7 +70,7 @@ const initialState: PhotoboothState = {
   photostripFrame: { color: "#FFFFFF", borderRadius: 8, borderWidth: 16 },
   photostripStickers: [],
   captionText: "",
-  sessionGallery: [],
+  sessionGallery: getInitialGallery(),
   photostripResult: null,
   sessionVideoUrl: null,
   sessionGifResult: null,
@@ -66,16 +86,24 @@ function reducer(state: PhotoboothState, action: Action): PhotoboothState {
         ...state,
         capturedPhotos: [...state.capturedPhotos, action.payload],
         filteredPhotos: [...state.filteredPhotos, action.payload],
+        sessionGifResult: null,
+        photostripResult: null,
       };
     case "SET_CAPTURED_PHOTOS":
-      return { ...state, capturedPhotos: action.payload, filteredPhotos: action.payload };
+      return {
+        ...state,
+        capturedPhotos: action.payload,
+        filteredPhotos: action.payload,
+        sessionGifResult: null,
+        photostripResult: null,
+      };
     case "SET_FILTERED_PHOTO": {
       const updated = [...state.filteredPhotos];
       updated[action.index] = action.payload;
-      return { ...state, filteredPhotos: updated };
+      return { ...state, filteredPhotos: updated, sessionGifResult: null, photostripResult: null };
     }
     case "SET_FILTERED_PHOTOS":
-      return { ...state, filteredPhotos: action.payload };
+      return { ...state, filteredPhotos: action.payload, sessionGifResult: null, photostripResult: null };
     case "SET_CURRENT_INDEX":
       return { ...state, currentPhotoIndex: action.payload };
     case "SET_ACTIVE_FILTERS":
@@ -94,10 +122,20 @@ function reducer(state: PhotoboothState, action: Action): PhotoboothState {
       return { ...state, photostripStickers: [...state.photostripStickers, action.payload] };
     case "SET_CAPTION":
       return { ...state, captionText: action.payload };
-    case "ADD_GALLERY_ITEM":
-      return { ...state, sessionGallery: [action.payload, ...state.sessionGallery] };
-    case "REMOVE_GALLERY_ITEM":
-      return { ...state, sessionGallery: state.sessionGallery.filter((g) => g.id !== action.payload) };
+    case "ADD_GALLERY_ITEM": {
+      const updatedGallery = [action.payload, ...state.sessionGallery.filter((g) => g.id !== action.payload.id)];
+      saveGallery(updatedGallery);
+      return { ...state, sessionGallery: updatedGallery };
+    }
+    case "REMOVE_GALLERY_ITEM": {
+      const filtered = state.sessionGallery.filter((g) => g.id !== action.payload);
+      saveGallery(filtered);
+      return { ...state, sessionGallery: filtered };
+    }
+    case "CLEAR_GALLERY": {
+      localStorage.removeItem("pckv_session_gallery");
+      return { ...state, sessionGallery: [] };
+    }
     case "SET_PHOTOSTRIP_RESULT":
       return { ...state, photostripResult: action.payload };
     case "SET_SESSION_VIDEO":

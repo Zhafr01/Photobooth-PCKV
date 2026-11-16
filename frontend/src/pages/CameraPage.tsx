@@ -5,12 +5,13 @@ import {
   Camera, FlipHorizontal, ArrowRight, RotateCcw,
   Upload, SlidersHorizontal, X, Layers, Clock, Video,
   Smartphone, CheckCircle2, Zap, Maximize, Minimize, RotateCw,
-  RefreshCw, Scan, Usb
+  RefreshCw, Scan, Usb, Frame, Sparkles
 } from "lucide-react";
 import QRCode from "qrcode";
 import Peer, { type DataConnection } from "peerjs";
 import { usePhotobooth } from "../store/photoboothStore";
 import { faceTracker, type FaceBox } from "../services/faceTracker";
+import { FRAME_THEMES, type FrameTheme } from "../constants/frameThemes";
 
 type LiveFilter =
   | "normal" | "bw" | "vintage" | "dreamy" | "vignette"
@@ -283,7 +284,7 @@ const COUNTDOWN_OPTIONS = [3, 5, 10];
 
 export default function CameraPage() {
   const navigate = useNavigate();
-  const { dispatch } = usePhotobooth();
+  const { state, dispatch } = usePhotobooth();
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -315,8 +316,16 @@ export default function CameraPage() {
   // Phone Camera WebRTC state
   const [, setBoothPeerId] = useState<string>("");
   const [phoneConnected, setPhoneConnected] = useState(false);
+  const [phoneFacingMode, setPhoneFacingMode] = useState<"environment" | "user">("environment");
   const [showPhoneModal, setShowPhoneModal] = useState(false);
   const [phoneQrUrl, setPhoneQrUrl] = useState<string>("");
+
+  // Frame theme on camera
+  const [showFrameDrawer, setShowFrameDrawer] = useState(false);
+  const [selectedFrameTheme, setSelectedFrameTheme] = useState<FrameTheme>(() => {
+    const found = FRAME_THEMES.find((f) => f.color.toLowerCase() === state.photostripFrame.color.toLowerCase());
+    return found || FRAME_THEMES[0];
+  });
 
   const [liveFilter, setLiveFilter] = useState<LiveFilter>("normal");
   const [blurStrength, setBlurStrength] = useState(6); // 1–20, default 6
@@ -761,6 +770,11 @@ export default function CameraPage() {
 
     peer.on("connection", (conn) => {
       phoneConnRef.current = conn;
+      conn.on("data", (data: any) => {
+        if (data?.type === "FACING_CHANGED" && data.facingMode) {
+          setPhoneFacingMode(data.facingMode);
+        }
+      });
       conn.on("close", () => {
         phoneConnRef.current = null;
       });
@@ -831,6 +845,7 @@ export default function CameraPage() {
     if (phoneConnected && phoneConnRef.current) {
       try {
         phoneConnRef.current.send({ type: "FLIP_CAMERA" });
+        setPhoneFacingMode((prev) => (prev === "environment" ? "user" : "environment"));
         return;
       } catch (e) {
         console.warn("Failed to send FLIP_CAMERA to phone:", e);
@@ -917,6 +932,17 @@ export default function CameraPage() {
       setFlash(true);
       setTimeout(() => setFlash(false), 180);
       setCapturedPhotos((prev) => [...prev, b64]);
+      dispatch({
+        type: "ADD_GALLERY_ITEM",
+        payload: {
+          id: `photo-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+          thumbnail: b64,
+          fullImage: b64,
+          createdAt: new Date().toISOString(),
+          filters: liveFilter !== "normal" ? [{ id: liveFilter, filterType: liveFilter, params: {} }] : [],
+          itemType: "photo",
+        },
+      });
       return;
     }
 
@@ -944,7 +970,18 @@ export default function CameraPage() {
     setFlash(true);
     setTimeout(() => setFlash(false), 180);
     setCapturedPhotos((prev) => [...prev, b64]);
-  }, [isMirrored, liveFilter, rotation]);
+    dispatch({
+      type: "ADD_GALLERY_ITEM",
+      payload: {
+        id: `photo-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+        thumbnail: b64,
+        fullImage: b64,
+        createdAt: new Date().toISOString(),
+        filters: liveFilter !== "normal" ? [{ id: liveFilter, filterType: liveFilter, params: {} }] : [],
+        itemType: "photo",
+      },
+    });
+  }, [isMirrored, liveFilter, rotation, dispatch]);
 
   /* ── 6. Video Recording ── */
   const startRecordingVideo = useCallback(() => {
@@ -1302,7 +1339,18 @@ export default function CameraPage() {
       </div>
 
       {/* Top-Right: Quick Actions */}
-      <div className="absolute top-4 right-4 z-20 flex gap-2">
+      <div className="absolute top-4 right-4 z-20 flex gap-1.5 flex-wrap justify-end">
+        {/* Frame Theme Picker Button */}
+        <button
+          onClick={() => setShowFrameDrawer(true)}
+          className="px-3 py-2 rounded-full backdrop-blur-sm text-xs font-semibold flex items-center gap-1.5 border border-white/20 bg-rose-600 hover:bg-rose-700 text-white shadow-md transition-colors"
+          title="Pilih Tema Bingkai"
+        >
+          <Frame size={15} />
+          <span className="hidden sm:inline">Bingkai:</span>
+          <span>{selectedFrameTheme.name}</span>
+        </button>
+
         <button
           onClick={() => setShowPhoneModal(true)}
           className={`px-3 py-2 rounded-full backdrop-blur-sm text-xs font-medium flex items-center gap-1.5 transition-colors border border-white/10 ${
@@ -1314,6 +1362,26 @@ export default function CameraPage() {
           <span className="hidden sm:inline">Kamera HP</span>
         </button>
 
+        {/* Flip front/back camera — with clear label when phone connected */}
+        {phoneConnected ? (
+          <button
+            onClick={handleFlipPhoneCamera}
+            className="px-3 py-2 rounded-full backdrop-blur-sm text-xs font-bold flex items-center gap-1.5 transition-colors border border-emerald-400/40 bg-emerald-600 hover:bg-emerald-700 text-white shadow-md"
+            title="Klik untuk pindah antara Kamera Depan & Belakang HP"
+          >
+            <RotateCcw size={15} />
+            <span>Kamera HP: {phoneFacingMode === "environment" ? "Belakang 📷" : "Depan 🤳"}</span>
+          </button>
+        ) : (
+          <button
+            onClick={handleFlipPhoneCamera}
+            className="w-10 h-10 rounded-full backdrop-blur-sm text-white flex items-center justify-center transition-colors border border-white/10 bg-black/60 hover:bg-black/80"
+            title="Ganti Perangkat Kamera"
+          >
+            <RotateCcw size={18} />
+          </button>
+        )}
+
         <button
           onClick={() => setIsMirrored((prev) => !prev)}
           className={`w-10 h-10 rounded-full backdrop-blur-sm text-white flex items-center justify-center transition-colors border border-white/10 ${
@@ -1322,15 +1390,6 @@ export default function CameraPage() {
           title={isMirrored ? "Cermin: Aktif" : "Cermin: Mati"}
         >
           <FlipHorizontal size={18} />
-        </button>
-
-        {/* Flip front/back camera — works on mobile/phone camera */}
-        <button
-          onClick={handleFlipPhoneCamera}
-          className="w-10 h-10 rounded-full backdrop-blur-sm text-white flex items-center justify-center transition-colors border border-white/10 bg-black/60 hover:bg-black/80"
-          title="Ganti Kamera Depan/Belakang"
-        >
-          <RotateCcw size={18} />
         </button>
 
         <button
@@ -1435,6 +1494,46 @@ export default function CameraPage() {
                   <p className="flex items-center gap-1.5 text-xs text-gray-300 font-semibold mb-1"><Usb size={12} className="text-blue-400" /> USB / Capture Card</p>
                   <p className="text-xs text-gray-500 leading-relaxed">Pasang <strong className="text-gray-300">DroidCam</strong> atau <strong className="text-gray-300">Iriun Webcam</strong> di HP + PC, lalu hubungkan via USB.</p>
                 </div>
+              </div>
+
+              {/* ── Frame Theme Section in Sidebar ── */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <p className="flex items-center gap-1.5 text-xs text-gray-300 font-semibold uppercase tracking-wider">
+                    <Frame size={13} className="text-rose-500" /> Bingkai Photostrip
+                  </p>
+                  <button
+                    onClick={() => { setSidebarOpen(false); setShowFrameDrawer(true); }}
+                    className="text-[11px] text-rose-400 font-bold hover:underline"
+                  >
+                    Semua ({FRAME_THEMES.length})
+                  </button>
+                </div>
+                <div className="grid grid-cols-2 gap-1.5 mb-2">
+                  {FRAME_THEMES.slice(0, 6).map((theme) => (
+                    <button
+                      key={theme.id}
+                      onClick={() => {
+                        setSelectedFrameTheme(theme);
+                        dispatch({ type: "SET_FRAME", payload: { color: theme.color } });
+                      }}
+                      className={`flex items-center gap-2 p-2 rounded-xl text-xs font-medium border text-left transition-all ${
+                        selectedFrameTheme.id === theme.id
+                          ? "border-rose-500 bg-rose-600/30 text-white font-bold"
+                          : "border-white/10 bg-white/5 text-gray-300 hover:bg-white/10"
+                      }`}
+                    >
+                      <span className="w-3.5 h-3.5 rounded-full border border-white/30 flex-shrink-0" style={{ background: theme.color }} />
+                      <span className="truncate">{theme.name}</span>
+                    </button>
+                  ))}
+                </div>
+                <button
+                  onClick={() => navigate("/photostrip")}
+                  className="w-full py-2 bg-white/10 hover:bg-white/20 rounded-xl text-xs font-semibold text-white flex items-center justify-center gap-1.5 transition-colors"
+                >
+                  <Sparkles size={13} className="text-amber-400" /> Buka Studio Bingkai & Stiker
+                </button>
               </div>
 
               {/* ── Filter Section ── */}
@@ -1574,6 +1673,26 @@ export default function CameraPage() {
       </AnimatePresence>
 
       {/* ── Shutter Button ── */}
+      {/* ── Frame & Quick Nav Bar (Above Shutter) ── */}
+      {capturedPhotos.length === 0 && (
+        <div className="absolute bottom-28 left-0 right-0 z-20 flex justify-center items-center gap-2 px-4 pointer-events-auto">
+          <button
+            onClick={() => setShowFrameDrawer(true)}
+            className="flex items-center gap-1.5 px-4 py-2 bg-black/70 hover:bg-black/90 backdrop-blur-md rounded-full text-xs font-semibold text-white border border-white/20 transition-all shadow-lg active:scale-95"
+          >
+            <Frame size={14} className="text-rose-400" />
+            <span>Pilih Bingkai ({selectedFrameTheme.name})</span>
+          </button>
+          <button
+            onClick={() => navigate("/photostrip")}
+            className="flex items-center gap-1.5 px-4 py-2 bg-black/70 hover:bg-black/90 backdrop-blur-md rounded-full text-xs font-semibold text-white border border-white/20 transition-all shadow-lg active:scale-95"
+          >
+            <Sparkles size={14} className="text-amber-400" />
+            <span>Desain & Stiker</span>
+          </button>
+        </div>
+      )}
+
       <div className="absolute bottom-6 left-0 right-0 z-20 flex justify-center">
         <button
           onClick={handleShutter}
@@ -1687,6 +1806,83 @@ export default function CameraPage() {
               >
                 {phoneConnected ? "Gunakan Kamera HP Ini" : "Tutup"}
               </button>
+            </motion.div>
+          </div>
+        )}
+
+        {/* ── Frame Selection Drawer / Modal ── */}
+        {showFrameDrawer && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-gray-900 border border-white/10 text-white rounded-3xl max-w-2xl w-full p-6 relative max-h-[85vh] flex flex-col"
+            >
+              <button
+                onClick={() => setShowFrameDrawer(false)}
+                className="absolute top-4 right-4 text-gray-400 hover:text-white p-2"
+                title="Tutup"
+              >
+                <X size={20} />
+              </button>
+              <div className="flex items-center gap-2 mb-1 text-rose-500 font-semibold text-sm">
+                <Frame size={18} /> Tema Bingkai Photostrip
+              </div>
+              <h3 className="text-xl font-bold mb-1">Pilih Desain Bingkai Favorit</h3>
+              <p className="text-xs text-gray-400 mb-4">
+                Pilih tema warna bingkai yang akan digunakan untuk mencetak foto Anda ({FRAME_THEMES.length} pilihan).
+              </p>
+
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 overflow-y-auto pr-1 flex-1 py-1">
+                {FRAME_THEMES.map((theme) => (
+                  <button
+                    key={theme.id}
+                    onClick={() => {
+                      setSelectedFrameTheme(theme);
+                      dispatch({ type: "SET_FRAME", payload: { color: theme.color } });
+                      setShowFrameDrawer(false);
+                    }}
+                    className={`flex items-center gap-2.5 p-3 rounded-2xl border text-left transition-all ${
+                      selectedFrameTheme.id === theme.id
+                        ? "border-rose-500 bg-rose-950/40 shadow-md ring-2 ring-rose-500/50"
+                        : "border-white/10 bg-white/5 hover:bg-white/10"
+                    }`}
+                  >
+                    <span
+                      className="w-7 h-7 rounded-xl border border-white/30 flex-shrink-0 shadow-sm"
+                      style={{ background: theme.color }}
+                    />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-bold text-white truncate">{theme.name}</p>
+                      <p className="text-[10px] text-gray-400 capitalize">{theme.category}</p>
+                    </div>
+                  </button>
+                ))}
+              </div>
+
+              <div className="pt-4 border-t border-white/10 mt-3 flex items-center justify-between gap-3 flex-wrap">
+                <span className="text-xs text-gray-400">
+                  Tema aktif: <strong className="text-white">{selectedFrameTheme.name}</strong>
+                </span>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => {
+                      setShowFrameDrawer(false);
+                      navigate("/photostrip");
+                    }}
+                    className="px-4 py-2.5 bg-white/10 hover:bg-white/20 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors"
+                  >
+                    <Sparkles size={14} className="text-amber-400" /> Buka Studio Lengkap
+                  </button>
+                  <button
+                    onClick={() => setShowFrameDrawer(false)}
+                    className="px-5 py-2.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold transition-colors shadow-sm"
+                  >
+                    Gunakan Bingkai Ini
+                  </button>
+                </div>
+              </div>
             </motion.div>
           </div>
         )}

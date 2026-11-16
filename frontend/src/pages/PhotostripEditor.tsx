@@ -5,134 +5,59 @@ import { usePhotobooth } from "../store/photoboothStore";
 import type { Sticker, PhotostripLayout } from "../types";
 import {
   ArrowRight, Loader2, ZoomIn, Frame, Sparkles,
-  Type, Palette, Move, RotateCcw, X
+  Type, Palette, Move, RotateCcw, X, Camera
 } from "lucide-react";
+import {
+  FRAME_THEMES,
+  STICKER_CATEGORIES,
+  FONT_OPTIONS,
+  type FrameTheme
+} from "../constants/frameThemes";
 
-/* ── 1. FRAME THEMES DATA (24+ Themes Across 5 Categories) ── */
-export interface FrameTheme {
-  id: string;
-  name: string;
-  category: "klasik" | "pastel" | "gradient" | "vintage" | "pattern";
-  type: "solid" | "gradient" | "pattern" | "film";
-  color: string;
-  gradient?: [string, string];
-  pattern?: "polka" | "checker" | "grid" | "hearts";
-  textColor?: string;
-  borderColor?: string;
-  hasDoubleBorder?: boolean;
+function generatePlaceholderPhotos(): string[] {
+  const canvas = document.createElement("canvas");
+  canvas.width = 640;
+  canvas.height = 480;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return [];
+
+  const cards = [
+    { g1: "#fda085", g2: "#f6d365", label: "Pose 1 ✌️", tag: "Contoh Foto Booth" },
+    { g1: "#a18cd1", g2: "#fbc2eb", label: "Pose 2 🌸", tag: "Contoh Foto Booth" },
+    { g1: "#84fab0", g2: "#8fd3f4", label: "Pose 3 ✨", tag: "Contoh Foto Booth" },
+    { g1: "#ff9a9e", g2: "#fecfef", label: "Pose 4 💖", tag: "Contoh Foto Booth" },
+  ];
+
+  return cards.map((c) => {
+    const grad = ctx.createLinearGradient(0, 0, 640, 480);
+    grad.addColorStop(0, c.g1);
+    grad.addColorStop(1, c.g2);
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, 640, 480);
+
+    ctx.fillStyle = "rgba(255, 255, 255, 0.25)";
+    ctx.beginPath();
+    ctx.arc(320, 210, 80, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.ellipse(320, 380, 140, 95, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = "#ffffff";
+    ctx.textAlign = "center";
+    ctx.shadowColor = "rgba(0,0,0,0.3)";
+    ctx.shadowBlur = 6;
+    ctx.font = "bold 38px 'Montserrat', sans-serif";
+    ctx.fillText(c.label, 320, 225);
+
+    ctx.font = "600 20px 'Montserrat', sans-serif";
+    ctx.fillText(c.tag, 320, 275);
+    ctx.shadowBlur = 0;
+
+    return canvas.toDataURL("image/png").split(",")[1];
+  });
 }
-
-const FRAME_THEMES: FrameTheme[] = [
-  // ── Klasik & Studio ──
-  { id: "white", name: "Putih Studio", category: "klasik", type: "solid", color: "#FFFFFF", textColor: "#1A1A1A" },
-  { id: "black", name: "Hitam Editorial", category: "klasik", type: "solid", color: "#18181B", textColor: "#FFFFFF" },
-  { id: "ivory", name: "Warm Ivory", category: "klasik", type: "solid", color: "#FAF7F2", textColor: "#292524" },
-  { id: "slate", name: "Slate Minimalist", category: "klasik", type: "solid", color: "#334155", textColor: "#F8FAFC" },
-  { id: "espresso", name: "Espresso Dark", category: "klasik", type: "solid", color: "#271E18", textColor: "#F5EBE0" },
-
-  // ── Pastel & Aesthetic ──
-  { id: "sakura", name: "Sakura Pink", category: "pastel", type: "solid", color: "#FCE7F3", textColor: "#831843", borderColor: "#F472B6" },
-  { id: "lavender", name: "Lavender Dream", category: "pastel", type: "solid", color: "#EDE9FE", textColor: "#4C1D95", borderColor: "#C4B5FD" },
-  { id: "matcha", name: "Matcha Mint", category: "pastel", type: "solid", color: "#DCFCE7", textColor: "#14532D", borderColor: "#86EFAC" },
-  { id: "butter", name: "Butter Yellow", category: "pastel", type: "solid", color: "#FEF9C3", textColor: "#713F12", borderColor: "#FDE047" },
-  { id: "sky", name: "Baby Sky Blue", category: "pastel", type: "solid", color: "#E0F2FE", textColor: "#0C4A6E", borderColor: "#7DD3FC" },
-  { id: "peach", name: "Soft Peach", category: "pastel", type: "solid", color: "#FFEDD5", textColor: "#7C2D12", borderColor: "#FDBA74" },
-
-  // ── Gradient Aesthetic ──
-  { id: "sunset", name: "Sunset Horizon", category: "gradient", type: "gradient", color: "#FF5E62", gradient: ["#FF5E62", "#FF9966"], textColor: "#FFFFFF" },
-  { id: "neon", name: "Neon Cyberpunk", category: "gradient", type: "gradient", color: "#8A2387", gradient: ["#8A2387", "#E94057"], textColor: "#FFFFFF" },
-  { id: "cotton", name: "Cotton Candy", category: "gradient", type: "gradient", color: "#F472B6", gradient: ["#F472B6", "#A78BFA"], textColor: "#FFFFFF" },
-  { id: "ocean", name: "Ocean Breeze", category: "gradient", type: "gradient", color: "#00b4db", gradient: ["#00b4db", "#0083b0"], textColor: "#FFFFFF" },
-  { id: "midnight", name: "Midnight Aurora", category: "gradient", type: "gradient", color: "#0f172a", gradient: ["#0f172a", "#1e293b"], textColor: "#E2E8F0" },
-  { id: "emerald", name: "Emerald Forest", category: "gradient", type: "gradient", color: "#064e3b", gradient: ["#064e3b", "#059669"], textColor: "#ECFDF5" },
-
-  // ── Retro & Vintage ──
-  { id: "polaroid", name: "90s Polaroid", category: "vintage", type: "solid", color: "#F7F3E9", textColor: "#3D3935", hasDoubleBorder: true },
-  { id: "filmstrip", name: "35mm Film Strip", category: "vintage", type: "film", color: "#141414", textColor: "#FAFAFA" },
-  { id: "parchment", name: "Vintage Parchment", category: "vintage", type: "solid", color: "#EFE0CD", textColor: "#452A0A", borderColor: "#D5BE9E" },
-  { id: "terracotta", name: "70s Terracotta", category: "vintage", type: "solid", color: "#C85A32", textColor: "#FFF7ED" },
-
-  // ── Pattern & Fun ──
-  { id: "polka", name: "Polka Dots Cute", category: "pattern", type: "pattern", pattern: "polka", color: "#FDF2F8", borderColor: "#F472B6", textColor: "#831843" },
-  { id: "checker", name: "Y2K Checkerboard", category: "pattern", type: "pattern", pattern: "checker", color: "#18181B", borderColor: "#3F3F46", textColor: "#FFFFFF" },
-  { id: "grid", name: "Notebook Grid", category: "pattern", type: "pattern", pattern: "grid", color: "#F8FAFC", borderColor: "#CBD5E1", textColor: "#0F172A" },
-  { id: "hearts", name: "Sweet Hearts", category: "pattern", type: "pattern", pattern: "hearts", color: "#FFF1F2", borderColor: "#FB7185", textColor: "#9F1239" },
-];
-
-/* ── 2. STICKER CATEGORIES (100+ Emojis / Decorative Stickers) ── */
-const STICKER_CATEGORIES = [
-  {
-    id: "cute",
-    name: "Cute & Kawaii",
-    icon: "🎀",
-    emojis: ["🎀", "🧸", "🐰", "🐱", "🌸", "🍓", "🍰", "🍭", "🍡", "🧁", "🌷", "🩰", "🪞", "🐾", "🍼", "🍮", "🐣", "🧋", "🍒", "🍯"],
-  },
-  {
-    id: "y2k",
-    name: "Y2K & Aesthetic",
-    icon: "✨",
-    emojis: ["⭐", "✨", "💫", "🦋", "💖", "💿", "🍒", "💅", "⚡", "🪐", "🔮", "🫧", "🪩", "🕶️", "🎧", "🔥", "🖤", "🗝️", "🧿", "💎"],
-  },
-  {
-    id: "love",
-    name: "Love & Romance",
-    icon: "💌",
-    emojis: ["💌", "💘", "💝", "💕", "🌹", "💍", "💋", "🕊️", "💐", "🥂", "🕯️", "❤️‍🔥", "🫶", "🫰", "🤍", "😘", "🫀", "🏹", "💞", "🥰"],
-  },
-  {
-    id: "party",
-    name: "Party & Hype",
-    icon: "🎉",
-    emojis: ["🎉", "🥳", "🎂", "🎈", "🎊", "🍾", "👑", "🎁", "🎇", "🎆", "🎵", "🕺", "💃", "🍻", "🏆", "🪅", "🍿", "🎤", "🎷", "🎸"],
-  },
-  {
-    id: "retro",
-    name: "Retro & Fun",
-    icon: "👾",
-    emojis: ["👾", "🕹️", "📼", "🛹", "🍕", "🍟", "🥤", "🥑", "🌈", "🌻", "✌️", "🤪", "😎", "👀", "🤡", "🚀", "🍄", "🍦", "🍩", "📷"],
-  },
-  {
-    id: "doodle",
-    name: "Doodles & Chat",
-    icon: "💬",
-    emojis: ["💬", "🗯️", "💭", "💯", "✔️", "❌", "❓", "❗️", "⚡️", "💢", "💤", "🎶", "📸", "🎬", "🌟", "🏷️", "📌", "✂️", "🪄", "💡"],
-  },
-];
-
-/* ── 3. FONT CATALOG (14+ Google & System Fonts) ── */
-export interface FontOption {
-  id: string;
-  name: string;
-  family: string;
-  category: "Script" | "Serif" | "Sans" | "Retro" | "Display";
-}
-
-const FONT_OPTIONS: FontOption[] = [
-  // Script / Handwriting
-  { id: "dancing", name: "Dancing Script", family: "'Dancing Script', cursive", category: "Script" },
-  { id: "pacifico", name: "Pacifico", family: "'Pacifico', cursive", category: "Script" },
-  { id: "caveat", name: "Caveat Doodle", family: "'Caveat', cursive", category: "Script" },
-
-  // Serif
-  { id: "playfair", name: "Playfair Display", family: "'Playfair Display', Georgia, serif", category: "Serif" },
-  { id: "cinzel", name: "Cinzel Royal", family: "'Cinzel', Georgia, serif", category: "Serif" },
-  { id: "georgia", name: "Georgia Klasik", family: "Georgia, serif", category: "Serif" },
-
-  // Modern Sans
-  { id: "montserrat", name: "Montserrat", family: "'Montserrat', sans-serif", category: "Sans" },
-  { id: "inter", name: "Inter Sans", family: "'Inter', sans-serif", category: "Sans" },
-
-  // Retro & Vintage
-  { id: "abril", name: "Abril Fatface", family: "'Abril Fatface', serif", category: "Retro" },
-  { id: "special_elite", name: "Special Elite (Mesin Tik)", family: "'Special Elite', monospace", category: "Retro" },
-  { id: "righteous", name: "Righteous 80s", family: "'Righteous', cursive", category: "Retro" },
-  { id: "courier", name: "Courier Monospace", family: "'Courier New', monospace", category: "Retro" },
-
-  // Display & Y2K
-  { id: "press_start", name: "Press Start (8-Bit Pixel)", family: "'Press Start 2P', monospace", category: "Display" },
-  { id: "orbitron", name: "Orbitron Cyber Y2K", family: "'Orbitron', sans-serif", category: "Display" },
-  { id: "impact", name: "Impact Bold", family: "Impact, sans-serif", category: "Display" },
-];
 
 /* ── 4. TEXT COLOR PALETTE ── */
 const TEXT_COLORS = [
@@ -190,7 +115,10 @@ export default function PhotostripEditor() {
   const [offsetX, setOffsetX] = useState(state.photoOffsetX || 0);
   const [offsetY, setOffsetY] = useState(state.photoOffsetY || 0);
 
-  const photos = state.filteredPhotos.length > 0 ? state.filteredPhotos : state.capturedPhotos;
+  const rawPhotos = state.filteredPhotos.length > 0 ? state.filteredPhotos : state.capturedPhotos;
+  const isDemo = rawPhotos.length === 0;
+  const [demoPhotos] = useState<string[]>(() => generatePlaceholderPhotos());
+  const photos = isDemo ? demoPhotos : rawPhotos;
   const layout = state.photostripLayout;
 
   /* ── Sticker Actions ── */
@@ -473,6 +401,9 @@ export default function PhotostripEditor() {
   }, [drawPhotostrip, photos.length]);
 
   const handleProceed = () => {
+    if (isDemo) {
+      dispatch({ type: "SET_CAPTURED_PHOTOS", payload: demoPhotos });
+    }
     navigate("/result");
   };
 
@@ -829,7 +760,25 @@ export default function PhotostripEditor() {
       </div>
 
       {/* ── CENTER: LIVE CANVAS PREVIEW ── */}
-      <div className="flex-1 flex flex-col items-center justify-center p-4 sm:p-6 gap-4 min-h-[500px]">
+      <div className="flex-1 flex flex-col items-center justify-center p-4 sm:p-6 gap-3 min-h-[500px]">
+        {/* Demo Mode Banner */}
+        {isDemo && (
+          <div className="bg-amber-50 border border-amber-200/80 rounded-2xl p-3 flex items-center justify-between gap-3 text-xs text-amber-900 max-w-xl w-full shadow-xs">
+            <div className="flex items-center gap-2">
+              <span className="text-base">💡</span>
+              <span>
+                <strong>Mode Pratinjau Bingkai:</strong> Menampilkan contoh foto. Pilih bingkai, stiker & font di sini, lalu ambil foto Anda sendiri di Kamera!
+              </span>
+            </div>
+            <button
+              onClick={() => navigate("/camera")}
+              className="px-3.5 py-1.5 bg-rose-600 hover:bg-rose-700 active:scale-95 text-white rounded-xl font-bold whitespace-nowrap shadow-xs transition-colors flex items-center gap-1.5"
+            >
+              <Camera size={14} /> Ambil Foto
+            </button>
+          </div>
+        )}
+
         <div className="relative bg-white rounded-3xl shadow-xl p-4 sm:p-5 overflow-auto max-h-[75vh] border border-gray-200 flex items-center justify-center">
           {loading && (
             <div className="absolute inset-0 flex flex-col items-center justify-center bg-white/80 rounded-3xl z-10 gap-2">

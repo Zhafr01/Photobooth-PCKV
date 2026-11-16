@@ -48,6 +48,7 @@ export interface GalleryItem {
   fullImage: string; // base64
   createdAt: string;
   filters: FilterChain[];
+  itemType?: "strip" | "photo";
 }
 
 export interface FilterApiResponse {
