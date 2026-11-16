@@ -761,6 +761,7 @@ export default function CameraPage() {
 
     if (mode === "quick") {
       let currentShot = 0;
+      const quickPhotos: string[] = []; // collect locally (avoid stale state closure)
       const takeNextShot = () => {
         let c = 3;
         setCountdown(c);
@@ -769,13 +770,44 @@ export default function CameraPage() {
           if (c <= 0) {
             clearInterval(timerId);
             setCountdown(null);
-            capturePhoto();
+
+            // Capture photo and store result in local array (not stale state)
+            const video = videoRef.current;
+            const canvas = canvasRef.current;
+            if (video && canvas) {
+              const rawW = video.videoWidth || 1920;
+              const rawH = video.videoHeight || 1080;
+              const isSideways = rotation % 180 !== 0;
+              const outW = isSideways ? rawH : rawW;
+              const outH = isSideways ? rawW : rawH;
+              canvas.width = outW;
+              canvas.height = outH;
+              const ctx = canvas.getContext("2d");
+              if (ctx) {
+                ctx.imageSmoothingEnabled = true;
+                ctx.imageSmoothingQuality = "high";
+                ctx.save();
+                ctx.translate(outW / 2, outH / 2);
+                if (rotation !== 0) ctx.rotate((rotation * Math.PI) / 180);
+                if (isMirrored) ctx.scale(-1, 1);
+                ctx.drawImage(video, -rawW / 2, -rawH / 2, rawW, rawH);
+                ctx.restore();
+                applyLiveFilter(ctx, canvas.width, canvas.height, liveFilter, faceBoxesRef.current);
+                const b64 = canvas.toDataURL("image/png", 1.0).split(",")[1];
+                quickPhotos.push(b64);
+                setFlash(true);
+                setTimeout(() => setFlash(false), 180);
+              }
+            }
+
             currentShot += 1;
             if (currentShot < 4) {
               setTimeout(takeNextShot, 1200);
             } else {
               stopRecordingVideo();
-              setTimeout(() => navigate("/photostrip"), 1500);
+              // Dispatch all 4 photos THEN navigate
+              dispatch({ type: "SET_CAPTURED_PHOTOS", payload: quickPhotos });
+              setTimeout(() => navigate("/photostrip"), 400);
             }
           } else {
             setCountdown(c);
@@ -799,7 +831,7 @@ export default function CameraPage() {
         setCountdown(c);
       }
     }, 1000);
-  }, [countdown, capturedPhotos.length, targetCount, countdownSecs, capturePhoto, mode, startRecordingVideo, stopRecordingVideo, navigate]);
+  }, [countdown, capturedPhotos.length, targetCount, countdownSecs, capturePhoto, mode, startRecordingVideo, stopRecordingVideo, navigate, rotation, isMirrored, liveFilter, dispatch]);
 
   const handleRetake = () => {
     setCapturedPhotos([]);
