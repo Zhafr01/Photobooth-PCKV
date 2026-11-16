@@ -244,6 +244,17 @@ export default function FilterStudio() {
 
       {/* Center - before/after canvas */}
       <div className="flex-1 flex flex-col items-center justify-center p-4 bg-gray-900 relative">
+        {/* Quick jump to Photostrip Editor & Frames */}
+        <div className="w-full max-w-xl flex items-center justify-between mb-3 bg-white/10 backdrop-blur-sm px-4 py-2 rounded-2xl border border-white/10">
+          <span className="text-xs text-gray-300 font-medium">Filter Efek Citra Digital (DIP)</span>
+          <button
+            onClick={handleApplyAndNavigate}
+            className="flex items-center gap-1.5 px-3.5 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold shadow-sm transition-all active:scale-95"
+          >
+            Pilih Bingkai & Stiker (Photostrip) <ArrowRight size={14} />
+          </button>
+        </div>
+
         {/* Photo navigator */}
         {state.capturedPhotos.length > 1 && (
           <div className="flex items-center gap-2 mb-3">

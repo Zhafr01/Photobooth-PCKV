@@ -1,6 +1,6 @@
 import { Link, useLocation } from "react-router-dom";
 import { useState } from "react";
-import { Camera, Home, Image, BookOpen, Menu, X } from "lucide-react";
+import { Camera, Home, Image, BookOpen, Menu, X, Frame } from "lucide-react";
 
 export default function Navbar() {
   const location = useLocation();
@@ -9,6 +9,7 @@ export default function Navbar() {
   const links = [
     { to: "/", label: "Beranda", icon: Home },
     { to: "/camera", label: "Kamera", icon: Camera },
+    { to: "/photostrip", label: "Bingkai & Stiker", icon: Frame },
     { to: "/gallery", label: "Galeri", icon: Image },
     { to: "/education", label: "Behind the Filter", icon: BookOpen },
   ];

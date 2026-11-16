@@ -1084,7 +1084,14 @@ export default function CameraPage() {
     dispatch({ type: "SET_SESSION_VIDEO", payload: null });
   };
 
+  // Primary: go directly to Photostrip Editor (Frames, Stickers, Mix Fonts)
   const handleProceed = () => {
+    dispatch({ type: "SET_CAPTURED_PHOTOS", payload: capturedPhotos });
+    navigate("/photostrip");
+  };
+
+  // Optional: go to DSP Filter Studio
+  const handleProceedStudio = () => {
     dispatch({ type: "SET_CAPTURED_PHOTOS", payload: capturedPhotos });
     navigate("/studio");
   };
@@ -1103,7 +1110,7 @@ export default function CameraPage() {
       photos.push(b64);
     }
     dispatch({ type: "SET_CAPTURED_PHOTOS", payload: photos });
-    navigate("/studio");
+    navigate("/photostrip");
   };
 
   // Camera source label
@@ -1609,9 +1616,21 @@ export default function CameraPage() {
                   <RotateCcw size={14} /> Ulang
                 </button>
                 {capturedPhotos.length >= targetCount && (
-                  <button onClick={handleProceed} className="flex items-center gap-1.5 px-4 py-2 bg-rose-600 rounded-xl text-xs font-semibold text-white hover:bg-rose-700 transition-colors shadow-sm">
-                    Lanjut ke Studio <ArrowRight size={14} />
-                  </button>
+                  <>
+                    <button
+                      onClick={handleProceedStudio}
+                      className="hidden sm:flex items-center gap-1.5 px-3 py-2 bg-white/10 rounded-xl text-xs font-medium text-white hover:bg-white/20 transition-colors"
+                      title="Filter Pengolahan Citra Digital (DIP)"
+                    >
+                      Filter Studio
+                    </button>
+                    <button
+                      onClick={handleProceed}
+                      className="flex items-center gap-1.5 px-4 py-2 bg-rose-600 rounded-xl text-xs font-bold text-white hover:bg-rose-700 transition-colors shadow-sm"
+                    >
+                      Pilih Bingkai & Stiker <ArrowRight size={14} />
+                    </button>
+                  </>
                 )}
               </div>
             </div>
