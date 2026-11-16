@@ -128,8 +128,8 @@ export default function CameraPage() {
 
     const constraints: MediaStreamConstraints = {
       video: deviceIdToUse
-        ? { deviceId: { ideal: deviceIdToUse } }
-        : { facingMode: "user" },
+        ? { deviceId: { ideal: deviceIdToUse }, width: { ideal: 1920 }, height: { ideal: 1080 } }
+        : { facingMode: "user", width: { ideal: 1920 }, height: { ideal: 1080 } },
       audio: false,
     };
 
@@ -263,13 +263,17 @@ export default function CameraPage() {
     const canvas = canvasRef.current;
     if (!video || !canvas) return;
 
-    const vw = video.videoWidth || 1280;
-    const vh = video.videoHeight || 720;
+    const vw = video.videoWidth || 1920;
+    const vh = video.videoHeight || 1080;
     canvas.width = vw;
     canvas.height = vh;
 
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
+
+    // Enable high-quality smoothing for sharp captures
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
 
     ctx.save();
     if (isMirrored) {
@@ -282,7 +286,7 @@ export default function CameraPage() {
     // Apply active live filter to captured snapshot
     applyLiveFilter(ctx, canvas.width, canvas.height, liveFilter);
 
-    const b64 = canvas.toDataURL("image/png").split(",")[1];
+    const b64 = canvas.toDataURL("image/png", 1.0).split(",")[1];
     setFlash(true);
     setTimeout(() => setFlash(false), 180);
     setCapturedPhotos((prev) => [...prev, b64]);
