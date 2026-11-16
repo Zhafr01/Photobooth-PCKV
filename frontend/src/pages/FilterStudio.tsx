@@ -5,7 +5,7 @@ import { ArrowRight, RotateCcw, Loader, ChevronRight, ChevronLeft, Trash2, GripV
 import { usePhotobooth } from "../store/photoboothStore";
 import FilterCard from "../components/FilterCard";
 import ParameterSlider from "../components/ParameterSlider";
-import { applyFilter } from "../services/api";
+import { applyFilter, checkBackendHealth } from "../services/api";
 import { resizeImageToBase64 } from "../utils/imageUtils";
 import type { FilterDefinition, FilterChain } from "../types";
 
@@ -67,9 +67,15 @@ export default function FilterStudio() {
   const [spectrumImage, setSpectrumImage] = useState<string | null>(null);
   const [showAnalysis, setShowAnalysis] = useState(false);
   const [photoIndex, setPhotoIndex] = useState(state.currentPhotoIndex);
+  const [backendStatus, setBackendStatus] = useState<"checking" | "online" | "offline">("checking");
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+
+  // Health-check backend on mount
+  useEffect(() => {
+    checkBackendHealth().then((ok) => setBackendStatus(ok ? "online" : "offline"));
+  }, []);
 
   const currentPhoto = state.capturedPhotos[photoIndex];
 
@@ -192,8 +198,22 @@ export default function FilterStudio() {
     >
       {/* Left sidebar - filter list */}
       <div className="w-56 bg-white border-r border-gray-200 flex flex-col overflow-y-auto">
-        <div className="p-3 border-b border-gray-100">
+        <div className="p-3 border-b border-gray-100 flex items-center justify-between gap-2">
           <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Filter</p>
+          {/* Backend status badge */}
+          <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full border flex items-center gap-1 ${
+            backendStatus === "online"
+              ? "bg-green-50 text-green-600 border-green-200"
+              : backendStatus === "offline"
+              ? "bg-red-50 text-red-500 border-red-200"
+              : "bg-yellow-50 text-yellow-600 border-yellow-200"
+          }`}>
+            <span className={`w-1.5 h-1.5 rounded-full inline-block ${
+              backendStatus === "online" ? "bg-green-500" :
+              backendStatus === "offline" ? "bg-red-400" : "bg-yellow-400 animate-pulse"
+            }`} />
+            {backendStatus === "online" ? "API ✓" : backendStatus === "offline" ? "Client-side" : "Ping..."}
+          </span>
         </div>
         {/* Category tabs */}
         <div className="flex border-b border-gray-100">

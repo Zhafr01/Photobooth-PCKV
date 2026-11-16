@@ -1,12 +1,29 @@
 import type { FilterApiResponse, AnalysisResponse } from "../types";
 import { applyClientFilter } from "./clientFilters";
 
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
+const API_URL = (import.meta.env.VITE_API_URL || "http://localhost:8000").replace(/\/$/, "");
+
+// Render free tier cold-starts in ~15-30s. We use longer timeout for chain (heavy) vs single filter.
+const TIMEOUT_SINGLE = 30000;  // 30s
+const TIMEOUT_CHAIN  = 60000;  // 60s
 
 export interface FilterItem {
   type: string;
   params: Record<string, number | string>;
 }
+
+/** Ping /health — returns true if backend is alive, false if cold/offline */
+export const checkBackendHealth = async (): Promise<boolean> => {
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+    const res = await fetch(`${API_URL}/health`, { signal: controller.signal });
+    clearTimeout(timeoutId);
+    return res.ok;
+  } catch {
+    return false;
+  }
+};
 
 export const applyFilter = async (
   image: string,
@@ -16,7 +33,7 @@ export const applyFilter = async (
 ): Promise<FilterApiResponse> => {
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 2500); // 2.5s timeout
+    const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_SINGLE);
 
     const response = await fetch(`${API_URL}/api/filter/apply`, {
       method: "POST",
@@ -34,7 +51,7 @@ export const applyFilter = async (
       return await response.json();
     }
   } catch {
-    // Backend offline / mixed-content fallback
+    // Backend offline / cold-start timeout → fallback to client-side
   }
 
   // Pure Client-side mathematical filter engine (Gonzalez & Woods)
@@ -48,7 +65,7 @@ export const applyFilterChain = async (
 ): Promise<FilterApiResponse> => {
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 3000);
+    const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_CHAIN);
 
     const response = await fetch(`${API_URL}/api/filter/chain`, {
       method: "POST",
@@ -88,7 +105,7 @@ export const applyFilterChain = async (
 export const getAnalysis = async (image: string): Promise<AnalysisResponse> => {
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 2500);
+    const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_SINGLE);
 
     const response = await fetch(`${API_URL}/api/analysis`, {
       method: "POST",
