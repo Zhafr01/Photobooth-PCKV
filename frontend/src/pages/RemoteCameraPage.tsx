@@ -142,6 +142,12 @@ export default function RemoteCameraPage() {
         </button>
       </div>
 
+      {/* Tips Landscape */}
+      <div className="w-full max-w-md mt-2 bg-rose-950/40 border border-rose-500/30 rounded-xl px-3 py-2 flex items-center gap-2.5 text-xs text-rose-200">
+        <span className="text-base">🔄</span>
+        <span><strong>Tips Kualitas Tajam:</strong> Miringkan HP ke posisi <strong>Mendatar (Landscape)</strong> agar tidak ter-zoom/buram di laptop.</span>
+      </div>
+
       {/* Live Camera Viewfinder */}
       <div className="w-full flex-1 my-4 flex items-center justify-center relative overflow-hidden rounded-2xl border border-white/10 bg-gray-950">
         <video

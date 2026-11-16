@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Camera, FlipHorizontal, ArrowRight, RotateCcw,
   Upload, SlidersHorizontal, X, Layers, Clock, Video,
-  Smartphone, CheckCircle2, Zap
+  Smartphone, CheckCircle2, Zap, Maximize, Minimize
 } from "lucide-react";
 import QRCode from "qrcode";
 import Peer from "peerjs";
@@ -79,6 +79,7 @@ export default function CameraPage() {
     () => localStorage.getItem("pckv_camera_device_id") || ""
   );
   const [isMirrored, setIsMirrored] = useState(true);
+  const [fitMode, setFitMode] = useState<"cover" | "contain">("cover");
 
   // Phone Camera WebRTC state
   const [, setBoothPeerId] = useState<string>("");
@@ -419,7 +420,9 @@ export default function CameraPage() {
         playsInline
         muted
         autoPlay
-        className={`absolute inset-0 w-full h-full object-cover transition-transform duration-200 ${
+        className={`absolute inset-0 w-full h-full ${
+          fitMode === "cover" ? "object-cover" : "object-contain"
+        } transition-all duration-200 ${
           isMirrored ? "-scale-x-100" : ""
         }`}
         style={{
@@ -528,6 +531,16 @@ export default function CameraPage() {
           title={isMirrored ? "Cermin: Aktif" : "Cermin: Mati"}
         >
           <FlipHorizontal size={18} />
+        </button>
+
+        <button
+          onClick={() => setFitMode((prev) => (prev === "cover" ? "contain" : "cover"))}
+          className={`w-10 h-10 rounded-full backdrop-blur-sm text-white flex items-center justify-center transition-colors border border-white/10 ${
+            fitMode === "contain" ? "bg-rose-600" : "bg-black/60 hover:bg-black/80"
+          }`}
+          title={fitMode === "cover" ? "Mode: Penuh (Zoom)" : "Mode: Pas (Tanpa Zoom)"}
+        >
+          {fitMode === "cover" ? <Maximize size={18} /> : <Minimize size={18} />}
         </button>
 
         <button
