@@ -73,9 +73,9 @@ function applyLiveFilter(
         for (let x = x0; x <= x1; x++)
           mask[y * w + x] = 1;
     }
-    // Box blur background (k=6 passes for strong blur)
+    // Box blur background (k=4 for live preview performance; full blur applied on capture)
     const copy = new Uint8ClampedArray(d);
-    const k = 8;
+    const k = 4;
     for (let y = k; y < h - k; y++) {
       for (let x = k; x < w - k; x++) {
         if (mask[y * w + x]) continue;
@@ -205,6 +205,7 @@ export default function CameraPage() {
   // Mutable refs so the RAF loop always reads latest values without stale closure
   const isMirroredRef = useRef(true);
   const liveFilterRef = useRef<LiveFilter>("normal");
+  const renderFrameRef = useRef(0); // for frame-throttle performance
 
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>(
@@ -307,8 +308,12 @@ export default function CameraPage() {
     const canvas = liveRenderCanvasRef.current;
     if (!canvas) return;
 
-    const dw = video.clientWidth;
-    const dh = video.clientHeight;
+    renderFrameRef.current++;
+    const frameNum = renderFrameRef.current;
+
+    // Use HALF display resolution → 4× fewer pixels, CSS scales it up
+    const dw = Math.max(1, Math.round(video.clientWidth / 2));
+    const dh = Math.max(1, Math.round(video.clientHeight / 2));
     if (dw === 0 || dh === 0) return;
 
     if (canvas.width !== dw || canvas.height !== dh) {
@@ -319,18 +324,18 @@ export default function CameraPage() {
     const ctx = canvas.getContext("2d", { willReadFrequently: true });
     if (!ctx) return;
 
-    // Draw video frame (apply mirror transform)
-    ctx.save();
-    if (isMirroredRef.current) {
-      ctx.translate(dw, 0);
-      ctx.scale(-1, 1);
-    }
+    // Draw video frame straight (NO internal mirror — CSS viewportStyle handles scaleX(-1))
     ctx.drawImage(video, 0, 0, dw, dh);
-    ctx.restore();
 
-    // Scale faceBoxes from video-space → display-space
-    const vw = video.videoWidth;
-    const vh = video.videoHeight;
+    const currentFilter = liveFilterRef.current;
+
+    // For heavy pixel filters, only process every 2nd frame → 2× less CPU
+    const isHeavyFilter = currentFilter === "face_blur_bg" || currentFilter === "face_spotlight" || currentFilter === "face_funny";
+    if (isHeavyFilter && frameNum % 2 !== 0) return;
+
+    // Scale faceBoxes from video-space → half-display-space
+    const vw = video.videoWidth || dw * 2;
+    const vh = video.videoHeight || dh * 2;
     const sx = dw / vw;
     const sy = dh / vh;
     const scaledBoxes: FaceBox[] = faceBoxesRef.current.map(fb => ({
@@ -340,8 +345,8 @@ export default function CameraPage() {
       h: fb.h * sy,
     }));
 
-    // Apply face filter at display resolution
-    applyLiveFilter(ctx, dw, dh, liveFilterRef.current, scaledBoxes);
+    // Apply face filter
+    applyLiveFilter(ctx, dw, dh, currentFilter, scaledBoxes);
   }, []);
 
 
@@ -368,13 +373,17 @@ export default function CameraPage() {
     const scaleX = displayW / vw;
     const scaleY = displayH / vh;
     const hasFaces = boxes.length > 0;
+    const mirrored = isMirroredRef.current;
 
     if (hasFaces) {
       // ── Detected: draw corner-bracket focus boxes ──
       for (const fb of boxes) {
-        const x = fb.x * scaleX;
+        // Flip X coordinate if mirrored (overlay canvas has NO CSS scaleX, coords are absolute)
+        const rawX = fb.x * scaleX;
+        const rawW = fb.w * scaleX;
+        const x = mirrored ? displayW - rawX - rawW : rawX;
         const y = fb.y * scaleY;
-        const w = fb.w * scaleX;
+        const w = rawW;
         const h = fb.h * scaleY;
         const pad = 10;
         const bx = x - pad, by = y - pad, bw = w + pad * 2, bh = h + pad * 2;
@@ -404,7 +413,7 @@ export default function CameraPage() {
 
         ctx.shadowBlur = 0;
 
-        // Label badge above face
+        // Label badge above face (always readable, no mirror on text)
         const label = "WAJAH TERDETEKSI";
         ctx.font = "bold 10px monospace";
         const tw = ctx.measureText(label).width;
@@ -870,11 +879,17 @@ export default function CameraPage() {
       />
 
       {/* ── Face Scan Overlay Canvas (always visible when face filter active) ── */}
+      {/* NOTE: overlay canvas uses NO CSS scaleX mirror — face coords are flipped manually in drawScanOverlay */}
       <canvas
         ref={overlayCanvasRef}
         className="absolute top-1/2 left-1/2 pointer-events-none z-10"
         style={{
-          ...viewportStyle,
+          // Same size/position as video but WITHOUT scaleX(-1) — text stays readable
+          width: viewportStyle.width,
+          height: viewportStyle.height,
+          maxWidth: viewportStyle.maxWidth,
+          maxHeight: viewportStyle.maxHeight,
+          transform: `translate(-50%, -50%) rotate(${rotation}deg)`,
           objectFit: fitMode === "cover" ? "cover" : "contain",
           opacity: needsFaceTracker ? 1 : 0,
           transition: "opacity 0.3s",
