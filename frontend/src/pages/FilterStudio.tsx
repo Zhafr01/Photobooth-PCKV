@@ -119,8 +119,14 @@ export default function FilterStudio() {
 
   const handleRemoveChain = (id: string) => setFilterChain((prev) => prev.filter((c) => c.id !== id));
 
-  const handleApplyAll = async () => {
-    if (filterChain.length === 0 || state.capturedPhotos.length === 0) return;
+  const handleApplyAndNavigate = async () => {
+    if (state.capturedPhotos.length === 0) { navigate("/photostrip"); return; }
+    // If no filter chain, go straight without processing
+    if (filterChain.length === 0) {
+      dispatch({ type: "SET_ACTIVE_FILTERS", payload: [] });
+      navigate("/photostrip");
+      return;
+    }
     setLoading(true);
     try {
       const results: string[] = [];
@@ -135,6 +141,12 @@ export default function FilterStudio() {
       }
       dispatch({ type: "SET_FILTERED_PHOTOS", payload: results });
       dispatch({ type: "SET_ACTIVE_FILTERS", payload: filterChain });
+      navigate("/photostrip");
+    } catch (e) {
+      console.error(e);
+      // Navigate anyway with original photos
+      dispatch({ type: "SET_ACTIVE_FILTERS", payload: filterChain });
+      navigate("/photostrip");
     } finally {
       setLoading(false);
     }
@@ -287,17 +299,15 @@ export default function FilterStudio() {
             </button>
           )}
           <button
-            onClick={handleApplyAll}
-            disabled={filterChain.length === 0 || loading}
-            className="px-4 py-2 bg-purple-600 text-white rounded-xl text-sm hover:bg-purple-700 disabled:opacity-50"
+            onClick={handleApplyAndNavigate}
+            disabled={loading}
+            className="flex items-center gap-1.5 px-4 py-2 bg-green-600 text-white rounded-xl text-sm hover:bg-green-700 disabled:opacity-60 font-medium"
           >
-            Terapkan ke Semua Foto
-          </button>
-          <button
-            onClick={() => { dispatch({ type: "SET_ACTIVE_FILTERS", payload: filterChain }); navigate("/photostrip"); }}
-            className="flex items-center gap-1.5 px-4 py-2 bg-green-600 text-white rounded-xl text-sm hover:bg-green-700"
-          >
-            Lanjut ke Photostrip <ArrowRight size={14} />
+            {loading ? (
+              <><Loader size={14} className="animate-spin" /> Memproses Filter...</>
+            ) : (
+              <>Terapkan & Lanjut ke Photostrip <ArrowRight size={14} /></>
+            )}
           </button>
         </div>
       </div>
