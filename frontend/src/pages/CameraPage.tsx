@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Camera, FlipHorizontal, ArrowRight, RotateCcw,
   Upload, SlidersHorizontal, X, Layers, Clock, Video,
-  Smartphone, CheckCircle2, Zap, Maximize, Minimize
+  Smartphone, CheckCircle2, Zap, Maximize, Minimize, RotateCw
 } from "lucide-react";
 import QRCode from "qrcode";
 import Peer from "peerjs";
@@ -80,6 +80,7 @@ export default function CameraPage() {
   );
   const [isMirrored, setIsMirrored] = useState(true);
   const [fitMode, setFitMode] = useState<"cover" | "contain">("cover");
+  const [rotation, setRotation] = useState<number>(0);
 
   // Phone Camera WebRTC state
   const [, setBoothPeerId] = useState<string>("");
@@ -272,10 +273,15 @@ export default function CameraPage() {
     const canvas = canvasRef.current;
     if (!video || !canvas) return;
 
-    const vw = video.videoWidth || 1920;
-    const vh = video.videoHeight || 1080;
-    canvas.width = vw;
-    canvas.height = vh;
+    const rawW = video.videoWidth || 1920;
+    const rawH = video.videoHeight || 1080;
+
+    const isSideways = rotation % 180 !== 0;
+    const outW = isSideways ? rawH : rawW;
+    const outH = isSideways ? rawW : rawH;
+
+    canvas.width = outW;
+    canvas.height = outH;
 
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
@@ -285,11 +291,21 @@ export default function CameraPage() {
     ctx.imageSmoothingQuality = "high";
 
     ctx.save();
+    // Move to center of canvas
+    ctx.translate(outW / 2, outH / 2);
+
+    // Apply rotation
+    if (rotation !== 0) {
+      ctx.rotate((rotation * Math.PI) / 180);
+    }
+
+    // Apply mirror
     if (isMirrored) {
-      ctx.translate(canvas.width, 0);
       ctx.scale(-1, 1);
     }
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    // Draw video centered
+    ctx.drawImage(video, -rawW / 2, -rawH / 2, rawW, rawH);
     ctx.restore();
 
     // Apply active live filter to captured snapshot
@@ -299,7 +315,7 @@ export default function CameraPage() {
     setFlash(true);
     setTimeout(() => setFlash(false), 180);
     setCapturedPhotos((prev) => [...prev, b64]);
-  }, [isMirrored, liveFilter]);
+  }, [isMirrored, liveFilter, rotation]);
 
   // Start MediaRecorder for Video Sesi
   const startRecordingVideo = useCallback(() => {
@@ -428,12 +444,14 @@ export default function CameraPage() {
         playsInline
         muted
         autoPlay
-        className={`absolute inset-0 w-full h-full ${
-          fitMode === "cover" ? "object-cover" : "object-contain"
-        } transition-all duration-200 ${
-          isMirrored ? "-scale-x-100" : ""
-        }`}
+        className="absolute top-1/2 left-1/2 transition-all duration-200"
         style={{
+          width: rotation % 180 !== 0 ? "calc(100vh - 56px)" : "100%",
+          height: rotation % 180 !== 0 ? "100vw" : "100%",
+          maxWidth: rotation % 180 !== 0 ? "calc(100vh - 56px)" : "100%",
+          maxHeight: rotation % 180 !== 0 ? "100vw" : "100%",
+          objectFit: fitMode === "cover" ? "cover" : "contain",
+          transform: `translate(-50%, -50%) rotate(${rotation}deg) ${isMirrored ? "scaleX(-1)" : ""}`,
           filter:
             liveFilter === "bw"
               ? "grayscale(100%) contrast(110%)"
@@ -539,6 +557,16 @@ export default function CameraPage() {
           title={isMirrored ? "Cermin: Aktif" : "Cermin: Mati"}
         >
           <FlipHorizontal size={18} />
+        </button>
+
+        <button
+          onClick={() => setRotation((r) => (r + 90) % 360)}
+          className={`w-10 h-10 rounded-full backdrop-blur-sm text-white flex items-center justify-center transition-colors border border-white/10 ${
+            rotation !== 0 ? "bg-rose-600" : "bg-black/60 hover:bg-black/80"
+          }`}
+          title={`Putar Kamera (Saat ini: ${rotation}°)`}
+        >
+          <RotateCw size={18} />
         </button>
 
         <button
