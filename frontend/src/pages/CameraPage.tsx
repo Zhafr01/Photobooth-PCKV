@@ -435,9 +435,8 @@ export default function CameraPage() {
     if (currentFilter === "normal") return;
 
     // Map faceBoxes: video-pixel coords → crop-adjusted canvas coords
-    // Video px → canvas px:  subtract srcOffset, then multiply by (dw/srcW)
-    const toCanvasX = dw / srcW;  // = coverScale
-    const toCanvasY = dh / srcH;  // = coverScale
+    const toCanvasX = dw / srcW;
+    const toCanvasY = dh / srcH;
     const scaledBoxes: FaceBox[] = faceBoxesRef.current
       .map(fb => ({
         x: (fb.x - srcX) * toCanvasX,
@@ -445,10 +444,51 @@ export default function CameraPage() {
         w: fb.w * toCanvasX,
         h: fb.h * toCanvasY,
       }))
-      // Clamp to canvas bounds
       .filter(fb => fb.x + fb.w > 0 && fb.y + fb.h > 0 && fb.x < dw && fb.y < dh);
 
-    // Apply filter every frame (no throttle = no flicker)
+    // ── Blur filters: use ctx.filter (GPU, no lag, no darkening) ──
+    const blurPx = Math.round(blurStrengthRef.current * 1.5);
+
+    if (currentFilter === "face_blur_bg") {
+      // 1. Redraw blurred full frame
+      ctx.filter = `blur(${blurPx}px)`;
+      ctx.drawImage(video, srcX, srcY, srcW, srcH, 0, 0, dw, dh);
+      ctx.filter = "none";
+      // 2. Clip ellipse per wajah, draw sharp on top
+      if (scaledBoxes.length > 0) {
+        ctx.save();
+        ctx.beginPath();
+        for (const fb of scaledBoxes) {
+          ctx.ellipse(fb.x + fb.w / 2, fb.y + fb.h / 2,
+            fb.w / 2 * 1.55, fb.h / 2 * 1.70, 0, 0, Math.PI * 2);
+        }
+        ctx.clip();
+        ctx.drawImage(video, srcX, srcY, srcW, srcH, 0, 0, dw, dh);
+        ctx.restore();
+      }
+      return;
+    }
+
+    if (currentFilter === "face_soft_blur") {
+      // 1. Draw sharp full frame (already done above)
+      // 2. Clip ellipse per wajah, draw blurred on top
+      if (scaledBoxes.length > 0) {
+        ctx.save();
+        ctx.beginPath();
+        for (const fb of scaledBoxes) {
+          ctx.ellipse(fb.x + fb.w / 2, fb.y + fb.h / 2,
+            fb.w / 2 * 1.1, fb.h / 2 * 1.1, 0, 0, Math.PI * 2);
+        }
+        ctx.clip();
+        ctx.filter = `blur(${blurPx}px)`;
+        ctx.drawImage(video, srcX, srcY, srcW, srcH, 0, 0, dw, dh);
+        ctx.filter = "none";
+        ctx.restore();
+      }
+      return;
+    }
+
+    // Apply other pixel filters (bw, vintage, dreamy, vignette, face filters)
     applyLiveFilter(ctx, dw, dh, currentFilter, scaledBoxes, blurStrengthRef.current);
   }, []);
 
