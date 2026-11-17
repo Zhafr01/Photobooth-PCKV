@@ -1,7 +1,21 @@
 import type { FilterApiResponse, AnalysisResponse } from "../types";
 import { applyClientFilter } from "./clientFilters";
 
-const API_URL = (import.meta.env.VITE_API_URL || "http://localhost:8000").replace(/\/$/, "");
+export const DEFAULT_BACKEND_URL = "https://photobooth-pckv-backend.onrender.com";
+
+export function getApiUrl(): string {
+  const envUrl = import.meta.env.VITE_API_URL;
+  if (envUrl && envUrl.trim() !== "") {
+    return envUrl.replace(/\/$/, "");
+  }
+  // In production (e.g. GitHub Pages) or any non-localhost host, always use the public Render backend
+  if (typeof window !== "undefined" && window.location.hostname !== "localhost" && window.location.hostname !== "127.0.0.1") {
+    return DEFAULT_BACKEND_URL;
+  }
+  return "http://localhost:8000";
+}
+
+const API_URL = getApiUrl();
 
 // Render free tier cold-starts in ~15-30s. We use longer timeout for chain (heavy) vs single filter.
 const TIMEOUT_SINGLE = 30000;  // 30s

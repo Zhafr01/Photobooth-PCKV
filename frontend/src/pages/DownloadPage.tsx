@@ -4,9 +4,10 @@
  */
 import { useEffect, useState, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Download, CheckCircle, AlertCircle, Loader } from "lucide-react";
+import { Download, CheckCircle, AlertCircle, Loader, Share2 } from "lucide-react";
+import { getApiUrl } from "../services/api";
 
-const API_URL = (import.meta.env.VITE_API_URL || "http://localhost:8000").replace(/\/$/, "");
+const API_URL = getApiUrl();
 
 export default function DownloadPage() {
   const [params] = useSearchParams();
@@ -57,8 +58,45 @@ export default function DownloadPage() {
     };
   }, [key]);
 
-  const downloadFile = (fmt: "png" | "gif") => {
-    window.location.href = `${API_URL}/api/download/${key}?fmt=${fmt}`;
+  const [downloading, setDownloading] = useState(false);
+
+  const downloadFile = async (fmt: "png" | "gif") => {
+    const url = `${API_URL}/api/download/${key}?fmt=${fmt}`;
+    setDownloading(true);
+
+    // Try Web Share API on mobile (gives native "Save Image" option in iOS/Android)
+    if (typeof navigator !== "undefined" && navigator.share && navigator.canShare) {
+      try {
+        const response = await fetch(url);
+        if (response.ok) {
+          const blob = await response.blob();
+          const ext = fmt === "gif" ? "gif" : "png";
+          const mime = fmt === "gif" ? "image/gif" : "image/png";
+          const file = new File([blob], `pckv-photostrip-${Date.now()}.${ext}`, { type: mime });
+          if (navigator.canShare({ files: [file] })) {
+            await navigator.share({
+              files: [file],
+              title: "PCKV Photostrip",
+            });
+            setDownloading(false);
+            return;
+          }
+        }
+      } catch (e: any) {
+        if (e.name !== "AbortError") {
+          console.log("Web Share dismissed, falling back to download link:", e);
+        }
+      }
+    }
+
+    // Direct browser download
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `pckv-photostrip-${Date.now()}.${fmt}`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setDownloading(false);
   };
 
   return (
@@ -112,9 +150,18 @@ export default function DownloadPage() {
             {/* Download Buttons */}
             <button
               onClick={() => downloadFile("png")}
-              className="w-full py-3.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl font-bold text-sm flex items-center justify-center gap-2 shadow-md active:scale-95 transition-all mb-2.5"
+              disabled={downloading}
+              className="w-full py-3.5 bg-rose-600 hover:bg-rose-700 disabled:opacity-60 text-white rounded-xl font-bold text-sm flex items-center justify-center gap-2 shadow-md active:scale-95 transition-all mb-2.5"
             >
-              <Download size={18} /> Unduh Photostrip (PNG)
+              {downloading ? (
+                <>
+                  <Loader size={18} className="animate-spin" /> Memproses...
+                </>
+              ) : (
+                <>
+                  <Share2 size={18} /> Simpan ke HP / Unduh (PNG)
+                </>
+              )}
             </button>
 
             {hasGif && (
@@ -128,9 +175,18 @@ export default function DownloadPage() {
                 </div>
                 <button
                   onClick={() => downloadFile("gif")}
-                  className="w-full py-3 bg-purple-600 hover:bg-purple-700 text-white rounded-xl font-bold text-sm flex items-center justify-center gap-2 shadow-md active:scale-95 transition-all"
+                  disabled={downloading}
+                  className="w-full py-3 bg-purple-600 hover:bg-purple-700 disabled:opacity-60 text-white rounded-xl font-bold text-sm flex items-center justify-center gap-2 shadow-md active:scale-95 transition-all"
                 >
-                  <Download size={18} /> Unduh GIF Boomerang
+                  {downloading ? (
+                    <>
+                      <Loader size={18} className="animate-spin" /> Memproses...
+                    </>
+                  ) : (
+                    <>
+                      <Download size={18} /> Simpan / Unduh GIF
+                    </>
+                  )}
                 </button>
               </div>
             )}

@@ -1,13 +1,16 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { motion } from "framer-motion";
 import { useNavigate } from "react-router-dom";
 import { usePhotobooth } from "../store/photoboothStore";
 import {
   Download, Printer, RefreshCw, Edit3, Image, Video,
-  Film, QrCode, Smartphone
+  Film, QrCode, Smartphone, CheckCircle2, AlertCircle, Copy, Check
 } from "lucide-react";
 import QRCode from "qrcode";
 import gifshot from "gifshot";
+import { getApiUrl } from "../services/api";
+
+const API_URL = getApiUrl();
 
 type ResultTab = "photostrip" | "gif" | "video" | "qr";
 
@@ -19,6 +22,9 @@ export default function ResultPage() {
   const [gifUrl, setGifUrl] = useState<string | null>(state.sessionGifResult);
   const [gifGenerating, setGifGenerating] = useState(false);
   const [qrCodeDataUrl, setQrCodeDataUrl] = useState<string>("");
+  const [uploadStatus, setUploadStatus] = useState<"idle" | "uploading" | "ready" | "error">("idle");
+  const [downloadPageUrl, setDownloadPageUrl] = useState<string>("");
+  const [copied, setCopied] = useState(false);
 
   const result = state.photostripResult;
   const photos = state.filteredPhotos.length > 0 ? state.filteredPhotos : state.capturedPhotos;
@@ -109,47 +115,47 @@ export default function ResultPage() {
     }
   }, [photos, sessionKey, dispatch]);
 
-  // 2. Upload photostrip to backend → generate QR Code pointing to download URL
-  useEffect(() => {
+  // 2. Upload photostrip to cloud backend → generate QR Code pointing to smartphone download URL
+  const uploadToCloud = useCallback(async () => {
     if (!result) return;
+    setUploadStatus("uploading");
+    setQrCodeDataUrl("");
 
-    const API_URL = (import.meta.env.VITE_API_URL || "http://localhost:8000").replace(/\/$/, "");
+    try {
+      const body: { image: string; gif?: string } = { image: result };
+      if (gifUrl) body.gif = gifUrl;
 
-    const doUpload = async () => {
-      try {
-        const body: { image: string; gif?: string } = { image: result };
-        if (gifUrl) body.gif = gifUrl;
+      const res = await fetch(`${API_URL}/api/upload`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(25000), // Render free tier cold-start may take up to 25s
+      });
 
-        const res = await fetch(`${API_URL}/api/upload`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-          signal: AbortSignal.timeout(15000),
-        });
+      if (!res.ok) throw new Error(`Upload failed: status ${res.status}`);
+      const data = (await res.json()) as { key: string };
+      const cleanPath = window.location.pathname.endsWith("/")
+        ? window.location.pathname
+        : `${window.location.pathname}/`;
+      const dlUrl = `${window.location.origin}${cleanPath}#/download?key=${data.key}`;
+      setDownloadPageUrl(dlUrl);
 
-        if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
-        const data = (await res.json()) as { key: string };
-        const cleanPath = window.location.pathname.endsWith("/")
-          ? window.location.pathname
-          : `${window.location.pathname}/`;
-        const downloadPageUrl = `${window.location.origin}${cleanPath}#/download?key=${data.key}`;
-
-        QRCode.toDataURL(downloadPageUrl, { margin: 1, width: 240 })
-          .then((url) => setQrCodeDataUrl(url))
-          .catch(console.error);
-      } catch (err) {
-        console.warn("Upload to backend failed, QR fallback ke halaman hasil:", err);
-        const cleanPath = window.location.pathname.endsWith("/")
-          ? window.location.pathname
-          : `${window.location.pathname}/`;
-        QRCode.toDataURL(`${window.location.origin}${cleanPath}#/result`, { margin: 1, width: 240 })
-          .then((url) => setQrCodeDataUrl(url))
-          .catch(console.error);
-      }
-    };
-
-    doUpload();
+      const qr = await QRCode.toDataURL(dlUrl, {
+        margin: 1,
+        width: 256,
+        color: { dark: "#0f172a", light: "#ffffff" },
+      });
+      setQrCodeDataUrl(qr);
+      setUploadStatus("ready");
+    } catch (err) {
+      console.error("Upload to backend failed:", err);
+      setUploadStatus("error");
+    }
   }, [result, gifUrl]);
+
+  useEffect(() => {
+    uploadToCloud();
+  }, [uploadToCloud]);
 
   const handleDownloadPNG = () => {
     if (!result) return;
@@ -300,20 +306,79 @@ export default function ResultPage() {
         )}
 
         {activeTab === "qr" && (
-          <div className="flex flex-col items-center text-center py-2">
-            <div className="p-3 bg-white rounded-2xl border border-gray-200 shadow-xs mb-3">
-              {qrCodeDataUrl ? (
-                <img src={qrCodeDataUrl} alt="QR Code" className="w-48 h-48" />
-              ) : (
-                <p className="text-xs text-gray-400">Membuat QR...</p>
-              )}
-            </div>
-            <p className="text-xs font-bold text-gray-800 flex items-center gap-1 mb-1">
-              <Smartphone size={15} className="text-rose-600" /> Buka Kamera HP Anda
-            </p>
-            <p className="text-[11px] text-gray-500 max-w-xs mb-4">
-              Arahkan kamera HP ke QR Code di atas untuk membuka galeri hasil photostrip dan mengunduh langsung ke galeri smartphone.
-            </p>
+          <div className="flex flex-col items-center text-center py-2 max-w-sm w-full mx-auto">
+            {uploadStatus === "uploading" && (
+              <div className="py-12 flex flex-col items-center gap-3">
+                <div className="w-10 h-10 border-4 border-rose-600 border-t-transparent rounded-full animate-spin" />
+                <p className="text-sm font-bold text-gray-800">Menghubungkan ke Server Cloud...</p>
+                <p className="text-xs text-gray-500">Mempersiapkan link unduh foto untuk smartphone Anda</p>
+              </div>
+            )}
+
+            {uploadStatus === "error" && (
+              <div className="py-8 flex flex-col items-center gap-3 w-full">
+                <div className="w-12 h-12 bg-rose-100 text-rose-600 rounded-2xl flex items-center justify-center">
+                  <AlertCircle size={28} />
+                </div>
+                <p className="text-sm font-bold text-gray-800">Gagal Mengunggah ke Server Transfer</p>
+                <p className="text-xs text-gray-500 leading-relaxed max-w-xs">
+                  Server cloud sedang bersiap atau koneksi terputus. Silakan klik tombol di bawah untuk mencoba kembali.
+                </p>
+                <button
+                  onClick={() => uploadToCloud()}
+                  className="mt-2 px-5 py-2.5 bg-rose-600 hover:bg-rose-700 active:scale-95 text-white rounded-xl text-xs font-bold transition-all shadow-md flex items-center gap-2"
+                >
+                  <RefreshCw size={14} /> Coba Unggah Lagi
+                </button>
+              </div>
+            )}
+
+            {uploadStatus === "ready" && (
+              <>
+                <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-emerald-50 border border-emerald-200 text-emerald-700 rounded-full text-xs font-bold mb-3 shadow-2xs">
+                  <CheckCircle2 size={14} /> QR Code Siap Discan
+                </div>
+
+                <div className="p-3 bg-white rounded-2xl border-2 border-emerald-500/20 shadow-md mb-3">
+                  {qrCodeDataUrl ? (
+                    <img src={qrCodeDataUrl} alt="QR Code" className="w-52 h-52 rounded-lg" />
+                  ) : (
+                    <p className="text-xs text-gray-400">Membuat QR...</p>
+                  )}
+                </div>
+
+                <p className="text-xs font-bold text-gray-800 flex items-center gap-1.5 mb-1">
+                  <Smartphone size={16} className="text-rose-600" /> Buka Kamera HP Anda
+                </p>
+                <p className="text-[11px] text-gray-500 max-w-xs mb-3">
+                  Arahkan kamera HP ke QR Code di atas. Ketuk link yang muncul untuk membuka dan menyimpan foto ke galeri smartphone.
+                </p>
+
+                {downloadPageUrl && (
+                  <div className="flex items-center gap-2 bg-white border border-gray-200 rounded-xl px-3 py-1.5 max-w-xs w-full text-left shadow-2xs">
+                    <span className="text-[10px] text-gray-500 font-mono truncate flex-1">{downloadPageUrl}</span>
+                    <button
+                      onClick={() => {
+                        navigator.clipboard.writeText(downloadPageUrl);
+                        setCopied(true);
+                        setTimeout(() => setCopied(false), 2000);
+                      }}
+                      className="text-[10px] text-rose-600 font-bold hover:underline flex items-center gap-1 flex-shrink-0"
+                    >
+                      {copied ? (
+                        <>
+                          <Check size={11} className="text-emerald-600" /> Tersalin!
+                        </>
+                      ) : (
+                        <>
+                          <Copy size={11} /> Salin Link
+                        </>
+                      )}
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
           </div>
         )}
       </div>

@@ -34,7 +34,7 @@ jobs:
       - name: Build
         run: cd frontend && npm run build
         env:
-          VITE_API_URL: ${{ secrets.VITE_API_URL }}
+          VITE_API_URL: ${{ secrets.VITE_API_URL || 'https://photobooth-pckv-backend.onrender.com' }}
 
       - name: Upload Pages Artifact
         uses: actions/upload-pages-artifact@v3
