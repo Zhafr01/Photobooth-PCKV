@@ -5,7 +5,7 @@ import {
   Camera, FlipHorizontal, ArrowRight, RotateCcw,
   Upload, SlidersHorizontal, X, Layers, Clock, Video,
   Smartphone, CheckCircle2, Zap, Maximize, Minimize, RotateCw,
-  RefreshCw, Scan, Usb, Frame, Sparkles
+  RefreshCw, Scan, Usb, Frame, Sparkles, ChevronDown, Check
 } from "lucide-react";
 import QRCode from "qrcode";
 import Peer, { type DataConnection } from "peerjs";
@@ -341,6 +341,7 @@ export default function CameraPage() {
   const [flash, setFlash] = useState(false);
   const [cameraError, setCameraError] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [showCameraDropdown, setShowCameraDropdown] = useState(false);
 
   // Face tracker
   const [faceBoxes, setFaceBoxes] = useState<FaceBox[]>([]);
@@ -1335,6 +1336,102 @@ export default function CameraPage() {
             {resolution}
           </div>
         )}
+
+        {/* ── Camera Switcher Dropdown (like Google Meet) ── */}
+        {!phoneConnected && devices.length > 0 && (
+          <div className="relative">
+            <button
+              onClick={() => setShowCameraDropdown((p) => !p)}
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-full backdrop-blur-sm text-xs font-medium border transition-colors ${
+                showCameraDropdown
+                  ? "bg-rose-600 border-rose-500 text-white"
+                  : "bg-black/60 border-white/10 text-gray-200 hover:bg-black/80 hover:text-white"
+              }`}
+              title="Ganti kamera"
+            >
+              <Video size={12} className="flex-shrink-0" />
+              <span className="max-w-[120px] truncate">
+                {devices.find((d) => d.deviceId === selectedDeviceId)?.label?.replace(/\(.*?\)/g, "").trim() || "Kamera"}
+              </span>
+              <ChevronDown size={11} className={`flex-shrink-0 transition-transform ${showCameraDropdown ? "rotate-180" : ""}`} />
+            </button>
+
+            <AnimatePresence>
+              {showCameraDropdown && (
+                <motion.div
+                  initial={{ opacity: 0, y: -6, scale: 0.97 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: -6, scale: 0.97 }}
+                  transition={{ duration: 0.14 }}
+                  className="absolute top-full left-0 mt-2 min-w-[220px] max-w-[300px] bg-black/90 backdrop-blur-md border border-white/15 rounded-2xl shadow-2xl overflow-hidden z-50"
+                >
+                  {/* Header */}
+                  <div className="flex items-center justify-between px-3 py-2 border-b border-white/10">
+                    <span className="text-[10px] text-gray-400 font-semibold uppercase tracking-widest">Pilih Kamera</span>
+                    <button
+                      onClick={async () => { await refreshDevices(); }}
+                      className="text-gray-500 hover:text-white transition-colors"
+                      title="Refresh daftar kamera"
+                    >
+                      <RefreshCw size={11} />
+                    </button>
+                  </div>
+
+                  {/* Device list */}
+                  <div className="py-1 max-h-56 overflow-y-auto">
+                    {devices.map((device, idx) => {
+                      const isActive = device.deviceId === selectedDeviceId;
+                      const label = device.label || `Kamera ${idx + 1}`;
+                      const isExternal = /external|usb|sony|imaging edge|capture|cam link|hdmi/i.test(label);
+                      const icon = isExternal ? "🎥" : idx === 0 ? "💻" : "📷";
+                      return (
+                        <button
+                          key={device.deviceId}
+                          onClick={() => {
+                            handleSelectCamera(device.deviceId);
+                            setShowCameraDropdown(false);
+                          }}
+                          className={`w-full flex items-center gap-2.5 px-3 py-2.5 text-left transition-colors ${
+                            isActive
+                              ? "bg-rose-600/30 text-white"
+                              : "text-gray-300 hover:bg-white/10 hover:text-white"
+                          }`}
+                        >
+                          <span className="text-sm flex-shrink-0">{icon}</span>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-medium truncate">{label}</p>
+                            {isExternal && (
+                              <p className="text-[10px] text-blue-400 font-mono">USB / Eksternal</p>
+                            )}
+                          </div>
+                          {isActive && (
+                            <Check size={13} className="text-rose-400 flex-shrink-0" />
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* Footer hint */}
+                  <div className="px-3 py-2 border-t border-white/10">
+                    <p className="text-[10px] text-gray-600 leading-tight">
+                      {devices.length} kamera terdeteksi. Pasang Sony A6000 via Imaging Edge &rarr; muncul otomatis.
+                    </p>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            {/* Close dropdown when clicking outside */}
+            {showCameraDropdown && (
+              <div
+                className="fixed inset-0 z-40"
+                onClick={() => setShowCameraDropdown(false)}
+              />
+            )}
+          </div>
+        )}
+
         {phoneConnected && (
           <div className="bg-emerald-600/90 text-white text-xs font-medium px-3 py-1.5 rounded-full flex items-center gap-1.5">
             <Smartphone size={13} /> HP Terhubung
