@@ -1230,49 +1230,37 @@ export default function PhotostripEditor() {
             >
               {stickers.map((s) => {
                 const isSelected = selectedStickerId === s.id;
+                const hitSize = Math.round((s.size ?? 48) * 0.55);
                 return (
-                  <div
-                    key={s.id}
-                    style={{
-                      position: "absolute",
-                      left: `${s.x}%`,
-                      top: `${s.y}%`,
-                      transform: `translate(-50%, -50%) rotate(${s.rotation ?? 0}deg)`,
-                      fontSize: `${Math.round((s.size ?? 48) * 0.55)}px`,
-                      lineHeight: 1,
-                      cursor: "grab",
-                      userSelect: "none",
-                      pointerEvents: "auto",
-                      zIndex: isSelected ? 20 : 10,
-                      filter: isSelected ? "drop-shadow(0 0 6px rgba(244,63,94,0.8))" : undefined,
-                      transition: dragStateRef.current?.id === s.id ? "none" : "filter 0.15s",
-                    }}
-                    onPointerDown={(e) => handleStickerPointerDown(e, s.id)}
-                    title={`Drag untuk pindah • Klik untuk pilih`}
-                  >
-                    {s.imageUrl ? (
-                      <img
-                        src={s.imageUrl}
-                        style={{
-                          width: `${Math.round((s.size ?? 48) * 0.55)}px`,
-                          height: `${Math.round((s.size ?? 48) * 0.55)}px`,
-                          objectFit: "contain",
-                          pointerEvents: "none",
-                        }}
-                        alt=""
-                        draggable={false}
-                      />
-                    ) : (
-                      <span style={{ pointerEvents: "none" }}>{s.emoji}</span>
-                    )}
-
-                    {/* Quick delete button */}
+                  <div key={s.id} style={{ position: "absolute", left: 0, top: 0, right: 0, bottom: 0, pointerEvents: "none" }}>
+                    {/* Invisible hit-area div — canvas is the visual source of truth */}
+                    <div
+                      style={{
+                        position: "absolute",
+                        left: `${s.x}%`,
+                        top: `${s.y}%`,
+                        width: `${hitSize}px`,
+                        height: `${hitSize}px`,
+                        transform: `translate(-50%, -50%) rotate(${s.rotation ?? 0}deg)`,
+                        cursor: isSelected ? "grab" : "crosshair",
+                        userSelect: "none",
+                        pointerEvents: "auto",
+                        zIndex: isSelected ? 20 : 10,
+                        boxSizing: "border-box",
+                        border: isSelected ? "2px dashed rgba(244,63,94,0.9)" : "2px dashed transparent",
+                        borderRadius: "4px",
+                      }}
+                      onPointerDown={(e) => handleStickerPointerDown(e, s.id)}
+                      title={`Drag untuk pindah • Klik untuk pilih`}
+                    />
+                    {/* Delete button — separate from hit div so it stays visible */}
                     {isSelected && (
                       <button
                         style={{
                           position: "absolute",
-                          top: "-8px",
-                          right: "-8px",
+                          left: `${s.x}%`,
+                          top: `${s.y}%`,
+                          transform: `translate(calc(-50% + ${hitSize / 2}px - 9px), calc(-50% - ${hitSize / 2}px - 9px))`,
                           width: "18px",
                           height: "18px",
                           borderRadius: "50%",
@@ -1285,6 +1273,7 @@ export default function PhotostripEditor() {
                           alignItems: "center",
                           justifyContent: "center",
                           pointerEvents: "auto",
+                          zIndex: 30,
                         }}
                         onPointerDown={(e) => e.stopPropagation()}
                         onClick={(e) => { e.stopPropagation(); removeSticker(s.id); setSelectedStickerId(null); }}
