@@ -248,6 +248,11 @@ export default function PhotostripEditor() {
       canvasWidth = 1200;
       canvasHeight = 1800;
       count = 4;
+    } else if (layout === "grid2x2landscape") {
+      // Landscape 2×2 grid — ideal for sharing on mobile (story / wallpaper format)
+      canvasWidth = 1800;
+      canvasHeight = 1200;
+      count = 4;
     } else if (layout === "singleCard") {
       canvasWidth = 1200;
       canvasHeight = 1800;
@@ -441,6 +446,12 @@ export default function PhotostripEditor() {
       photoW = Math.floor((canvas.width - pad * 2 - colGap) / 2);
       const availH = canvas.height - topH - bottomH - colGap;
       photoH = Math.floor(availH / 2);
+    } else if (layout === "grid2x2landscape") {
+      // Landscape: 2 columns side by side, 2 rows — wider than tall
+      const colGap = Math.round(scaledGap * 1.2);
+      photoW = Math.floor((canvas.width - pad * 2 - colGap) / 2);
+      const availH = canvas.height - topH - bottomH - colGap;
+      photoH = Math.floor(availH / 2);
     } else if (layout === "singleCard") {
       photoW = canvas.width - pad * 2;
       photoH = canvas.height - topH - bottomH;
@@ -454,7 +465,7 @@ export default function PhotostripEditor() {
       let x = pad;
       let y = topH + i * (photoH + scaledGap);
 
-      if (layout === "grid2x2") {
+      if (layout === "grid2x2" || layout === "grid2x2landscape") {
         const colGap = Math.round(scaledGap * 1.2);
         const col = i % 2;
         const row = Math.floor(i / 2);
@@ -708,10 +719,11 @@ export default function PhotostripEditor() {
                 </label>
                 <div className="grid grid-cols-2 gap-1.5">
                   {[
-                    { key: "strip4", label: "Strip 4 Foto" },
-                    { key: "strip3", label: "Strip 3 Foto" },
-                    { key: "grid2x2", label: "Grid 2×2" },
-                    { key: "singleCard", label: "Kartu 1 Foto" },
+                    { key: "strip4", label: "Strip 4 Foto", icon: "⬛⬛⬛⬛" },
+                    { key: "strip3", label: "Strip 3 Foto", icon: "⬛⬛⬛" },
+                    { key: "grid2x2", label: "Grid 2×2 Potret", icon: "▪▪\n▪▪" },
+                    { key: "grid2x2landscape", label: "Grid 2×2 Landscape", icon: "🔲" },
+                    { key: "singleCard", label: "Kartu 1 Foto", icon: "🖼️" },
                   ].map((t) => (
                     <button
                       key={t.key}

@@ -1,4 +1,4 @@
-export type PhotostripLayout = "strip3" | "strip4" | "grid2x2" | "singleCard";
+export type PhotostripLayout = "strip3" | "strip4" | "grid2x2" | "singleCard" | "grid2x2landscape";
 
 export interface FrameStyle {
   color: string;

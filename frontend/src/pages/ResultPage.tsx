@@ -244,24 +244,45 @@ export default function ResultPage() {
       </div>
 
       {/* Main Preview Display Card */}
-      <div className="bg-white rounded-3xl shadow-md p-6 max-w-md w-full border border-gray-200 flex flex-col items-center">
+      <div className="bg-white rounded-3xl shadow-md p-6 max-w-2xl w-full border border-gray-200 flex flex-col items-center">
         {activeTab === "photostrip" && (
           <>
             {result ? (
               <img
                 src={`data:image/png;base64,${result}`}
                 alt="Photostrip Final"
-                className="w-full max-h-[60vh] object-contain rounded-xl shadow-xs"
+                className="w-full max-h-[70vh] object-contain rounded-xl shadow-xs"
+                style={{ imageRendering: "auto" }}
               />
             ) : (
               <p className="text-gray-400 py-12 text-center text-sm">Photostrip belum dibuat.</p>
             )}
-            <button
-              onClick={handleDownloadPNG}
-              className="mt-5 w-full flex items-center justify-center gap-2 py-3 bg-rose-600 text-white rounded-xl font-semibold text-sm hover:bg-rose-700 active:scale-95 transition-all shadow"
-            >
-              <Download size={18} /> Unduh Photostrip PNG (300 DPI)
-            </button>
+            <div className="mt-5 w-full flex flex-col sm:flex-row gap-2">
+              <button
+                onClick={handleDownloadPNG}
+                className="flex-1 flex items-center justify-center gap-2 py-3 bg-rose-600 text-white rounded-xl font-semibold text-sm hover:bg-rose-700 active:scale-95 transition-all shadow"
+              >
+                <Download size={18} /> Unduh PNG (300 DPI)
+              </button>
+              {typeof navigator !== "undefined" && "share" in navigator && result && (
+                <button
+                  onClick={async () => {
+                    try {
+                      const blob = await (await fetch(`data:image/png;base64,${result}`)).blob();
+                      const file = new File([blob], `pckv-photostrip-${Date.now()}.png`, { type: "image/png" });
+                      if (navigator.canShare?.({ files: [file] })) {
+                        await navigator.share({ files: [file], title: "PCKV Photostrip" });
+                      } else {
+                        handleDownloadPNG();
+                      }
+                    } catch { handleDownloadPNG(); }
+                  }}
+                  className="flex items-center justify-center gap-2 py-3 px-4 bg-white border border-rose-300 text-rose-700 rounded-xl font-semibold text-sm hover:bg-rose-50 active:scale-95 transition-all shadow-xs"
+                >
+                  <Smartphone size={16} /> Bagikan ke HP
+                </button>
+              )}
+            </div>
           </>
         )}
 

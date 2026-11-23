@@ -630,13 +630,15 @@ export default function CameraPage() {
       const allDevices = await navigator.mediaDevices.enumerateDevices();
       const videoInputs = allDevices.filter((d) => d.kind === "videoinput");
       setDevices(videoInputs);
-      if (videoInputs.length > 0 && !selectedDeviceId) {
-        setSelectedDeviceId(videoInputs[0].deviceId);
-      }
+      // Only auto-select if nothing selected yet
+      setSelectedDeviceId((prev) => {
+        if (!prev && videoInputs.length > 0) return videoInputs[0].deviceId;
+        return prev;
+      });
     } catch (err) {
       console.warn("Gagal membaca daftar perangkat kamera:", err);
     }
-  }, [selectedDeviceId]);
+  }, []);
 
   /* ── 2. Start Camera Stream (Enhanced Quality) ── */
   const startCamera = useCallback(async (deviceIdToUse?: string) => {
@@ -839,6 +841,12 @@ export default function CameraPage() {
   }, [selectedDeviceId, startCamera, refreshDevices, phoneConnected]);
 
   const handleSelectCamera = (deviceId: string) => {
+    // Stop ALL active streams before switching so the camera hardware is released
+    // (critical for external cameras like Sony A6000 via Imaging Edge)
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach((t) => t.stop());
+      localStreamRef.current = null;
+    }
     if (remoteStreamRef.current) {
       remoteStreamRef.current.getTracks().forEach((t) => t.stop());
       remoteStreamRef.current = null;
