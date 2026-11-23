@@ -5,7 +5,8 @@ import { usePhotobooth } from "../store/photoboothStore";
 import type { Sticker, PhotostripLayout } from "../types";
 import {
   ArrowRight, Loader2, ZoomIn, Frame, Sparkles,
-  Type, Palette, Move, RotateCcw, X, Camera, SlidersHorizontal
+  Type, Palette, Move, RotateCcw, X, Camera, SlidersHorizontal,
+  Upload, GripVertical, RotateCw
 } from "lucide-react";
 import {
   FRAME_THEMES,
@@ -56,6 +57,17 @@ export default function PhotostripEditor() {
   const [stickerCategory, setStickerCategory] = useState<string>("cute");
   const [stickerSize, setStickerSize] = useState<number>(48);
   const [stickers, setStickers] = useState<Sticker[]>(state.photostripStickers || []);
+
+  // Sticker drag & selection state
+  const [selectedStickerId, setSelectedStickerId] = useState<string | null>(null);
+  const dragStateRef = useRef<{
+    id: string;
+    startPointerX: number;
+    startPointerY: number;
+    startStickerX: number;
+    startStickerY: number;
+  } | null>(null);
+  const previewContainerRef = useRef<HTMLDivElement>(null);
 
   // Multi-Font & Text Customization (Mix Fonts)
   const [showHeader, setShowHeader] = useState(true);
@@ -116,6 +128,99 @@ export default function PhotostripEditor() {
     setStickers([]);
     dispatch({ type: "SET_STICKERS", payload: [] });
   };
+
+  /* ── Sticker Drag Handlers (pointer events on overlay) ── */
+  const handleStickerPointerDown = useCallback((e: React.PointerEvent, id: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    setSelectedStickerId(id);
+    const s = stickers.find((st) => st.id === id);
+    if (!s) return;
+    dragStateRef.current = {
+      id,
+      startPointerX: e.clientX,
+      startPointerY: e.clientY,
+      startStickerX: s.x,
+      startStickerY: s.y,
+    };
+  }, [stickers]);
+
+  const handleStickerPointerMove = useCallback((e: React.PointerEvent) => {
+    const drag = dragStateRef.current;
+    if (!drag || !previewContainerRef.current) return;
+    const container = previewContainerRef.current;
+    const rect = container.getBoundingClientRect();
+    const dx = ((e.clientX - drag.startPointerX) / rect.width) * 100;
+    const dy = ((e.clientY - drag.startPointerY) / rect.height) * 100;
+    const newX = Math.max(2, Math.min(98, drag.startStickerX + dx));
+    const newY = Math.max(2, Math.min(98, drag.startStickerY + dy));
+    setStickers((prev) =>
+      prev.map((s) => s.id === drag.id ? { ...s, x: newX, y: newY } : s)
+    );
+  }, []);
+
+  const handleStickerPointerUp = useCallback(() => {
+    if (!dragStateRef.current) return;
+    const id = dragStateRef.current.id;
+    dragStateRef.current = null;
+    // Sync final position to store
+    setStickers((prev) => {
+      dispatch({ type: "SET_STICKERS", payload: prev });
+      return prev;
+    });
+    // Keep selected for resize/rotate controls
+    setSelectedStickerId(id);
+  }, [dispatch]);
+
+  const handleStickerRotate = useCallback((id: string, delta: number) => {
+    setStickers((prev) => {
+      const updated = prev.map((s) =>
+        s.id === id ? { ...s, rotation: ((s.rotation ?? 0) + delta + 360) % 360 } : s
+      );
+      dispatch({ type: "SET_STICKERS", payload: updated });
+      return updated;
+    });
+  }, [dispatch]);
+
+  const handleStickerResize = useCallback((id: string, delta: number) => {
+    setStickers((prev) => {
+      const updated = prev.map((s) =>
+        s.id === id ? { ...s, size: Math.max(16, Math.min(120, (s.size ?? 48) + delta)) } : s
+      );
+      dispatch({ type: "SET_STICKERS", payload: updated });
+      return updated;
+    });
+  }, [dispatch]);
+
+  /* ── Custom Sticker Upload ── */
+  const handleCustomStickerUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    Array.from(files).forEach((file) => {
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        const dataUrl = ev.target?.result as string;
+        if (!dataUrl) return;
+        const newSticker: Sticker = {
+          id: `custom-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+          emoji: "🖼️",
+          imageUrl: dataUrl,
+          x: Math.random() * 50 + 25,
+          y: Math.random() * 50 + 25,
+          size: stickerSize,
+        };
+        setStickers((prev) => {
+          const updated = [...prev, newSticker];
+          dispatch({ type: "SET_STICKERS", payload: updated });
+          return updated;
+        });
+        setSelectedStickerId(newSticker.id);
+      };
+      reader.readAsDataURL(file);
+    });
+    e.target.value = ""; // reset so same file can be re-uploaded
+  }, [stickerSize, dispatch]);
 
   /* ── 300 DPI Standard Photostrip Canvas Drawing ── */
   const drawPhotostrip = useCallback(async () => {
@@ -405,15 +510,37 @@ export default function PhotostripEditor() {
     });
 
     // ── 5. Draw Themed Stickers ──
-    stickers.forEach((s) => {
+    for (const s of stickers) {
       const effectiveStickerSize = Math.round((s.size || 48) * scale);
-      ctx.font = `${effectiveStickerSize}px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", serif`;
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
       const sx = (s.x / 100) * canvas.width;
       const sy = (s.y / 100) * canvas.height;
-      ctx.fillText(s.emoji, sx, sy);
-    });
+      const rot = ((s.rotation ?? 0) * Math.PI) / 180;
+
+      ctx.save();
+      ctx.translate(sx, sy);
+      if (rot !== 0) ctx.rotate(rot);
+
+      if (s.imageUrl) {
+        // Custom uploaded sticker: preload then draw
+        await new Promise<void>((resolve) => {
+          const img = new Image();
+          img.onload = () => {
+            ctx.drawImage(img, -effectiveStickerSize / 2, -effectiveStickerSize / 2, effectiveStickerSize, effectiveStickerSize);
+            resolve();
+          };
+          img.onerror = () => resolve();
+          img.src = s.imageUrl!;
+        });
+      } else {
+        // Emoji sticker
+        ctx.font = `${effectiveStickerSize}px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", serif`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(s.emoji, 0, 0);
+      }
+
+      ctx.restore();
+    }
 
     // ── 6. Draw Footer: Caption & Date (Separate Mixed Fonts with contrast halo!) ──
     if (caption || showDate) {
@@ -843,7 +970,7 @@ export default function PhotostripEditor() {
                 </div>
 
                 {/* Stickers Grid */}
-                <div className="grid grid-cols-5 gap-2 p-2 bg-gray-50 rounded-2xl border border-gray-200 max-h-[30vh] overflow-y-auto">
+                <div className="grid grid-cols-5 gap-2 p-2 bg-gray-50 rounded-2xl border border-gray-200 max-h-[28vh] overflow-y-auto">
                   {STICKER_CATEGORIES.find((c) => c.id === stickerCategory)?.emojis.map((emoji, idx) => (
                     <button
                       key={`${emoji}-${idx}`}
@@ -855,9 +982,21 @@ export default function PhotostripEditor() {
                     </button>
                   ))}
                 </div>
+
+                {/* Upload Custom Sticker */}
+                <label className="mt-2 flex items-center justify-center gap-2 w-full py-2 bg-blue-50 hover:bg-blue-100 border border-dashed border-blue-300 rounded-xl text-xs font-semibold text-blue-700 cursor-pointer transition-colors">
+                  <Upload size={13} /> Upload Gambar Custom
+                  <input
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    className="hidden"
+                    onChange={handleCustomStickerUpload}
+                  />
+                </label>
               </div>
 
-              {/* Active Stickers List */}
+              {/* Active Stickers List with controls */}
               <div>
                 <div className="flex items-center justify-between mb-2">
                   <label className="font-bold text-gray-900 text-xs uppercase tracking-wider">
@@ -872,28 +1011,70 @@ export default function PhotostripEditor() {
                     </button>
                   )}
                 </div>
+                <p className="text-[10px] text-gray-400 mb-2">💡 Drag stiker di preview untuk memindahkan posisinya</p>
 
                 {stickers.length === 0 ? (
                   <p className="text-xs text-gray-400 py-3 text-center bg-gray-50 rounded-xl border border-dashed border-gray-200">
                     Belum ada stiker. Tap stiker di atas untuk menempelkannya!
                   </p>
                 ) : (
-                  <div className="flex flex-wrap gap-1.5 max-h-[20vh] overflow-y-auto">
-                    {stickers.map((s) => (
-                      <div
-                        key={s.id}
-                        className="flex items-center gap-1.5 bg-gray-100 hover:bg-gray-200 px-2.5 py-1 rounded-xl text-xs"
-                      >
-                        <span className="text-base">{s.emoji}</span>
-                        <button
-                          onClick={() => removeSticker(s.id)}
-                          className="text-gray-400 hover:text-red-500"
-                          title="Hapus stiker"
+                  <div className="flex flex-col gap-1.5 max-h-[22vh] overflow-y-auto">
+                    {stickers.map((s) => {
+                      const isSelected = selectedStickerId === s.id;
+                      return (
+                        <div
+                          key={s.id}
+                          onClick={() => setSelectedStickerId(isSelected ? null : s.id)}
+                          className={`flex items-center gap-2 px-2.5 py-1.5 rounded-xl text-xs cursor-pointer transition-all border ${
+                            isSelected
+                              ? "bg-rose-50 border-rose-300"
+                              : "bg-gray-100 border-transparent hover:bg-gray-200"
+                          }`}
                         >
-                          <X size={12} />
-                        </button>
-                      </div>
-                    ))}
+                          <GripVertical size={12} className="text-gray-400 flex-shrink-0" />
+                          {s.imageUrl ? (
+                            <img src={s.imageUrl} className="w-6 h-6 rounded object-cover flex-shrink-0" alt="" />
+                          ) : (
+                            <span className="text-base flex-shrink-0">{s.emoji}</span>
+                          )}
+                          <span className="text-gray-600 truncate flex-1 text-[10px]">
+                            {s.imageUrl ? "Gambar custom" : s.emoji} • {Math.round(s.size ?? 48)}px
+                          </span>
+                          {/* Rotate & resize controls — only for selected */}
+                          {isSelected && (
+                            <div className="flex items-center gap-1 flex-shrink-0">
+                              <button
+                                onClick={(e) => { e.stopPropagation(); handleStickerResize(s.id, -8); }}
+                                className="w-5 h-5 rounded bg-gray-200 hover:bg-gray-300 text-gray-700 flex items-center justify-center font-bold text-xs"
+                                title="Perkecil"
+                              >−</button>
+                              <button
+                                onClick={(e) => { e.stopPropagation(); handleStickerResize(s.id, 8); }}
+                                className="w-5 h-5 rounded bg-gray-200 hover:bg-gray-300 text-gray-700 flex items-center justify-center font-bold text-xs"
+                                title="Perbesar"
+                              >+</button>
+                              <button
+                                onClick={(e) => { e.stopPropagation(); handleStickerRotate(s.id, -15); }}
+                                className="w-5 h-5 rounded bg-blue-100 hover:bg-blue-200 text-blue-700 flex items-center justify-center"
+                                title="Putar kiri"
+                              ><RotateCcw size={10} /></button>
+                              <button
+                                onClick={(e) => { e.stopPropagation(); handleStickerRotate(s.id, 15); }}
+                                className="w-5 h-5 rounded bg-blue-100 hover:bg-blue-200 text-blue-700 flex items-center justify-center"
+                                title="Putar kanan"
+                              ><RotateCw size={10} /></button>
+                            </div>
+                          )}
+                          <button
+                            onClick={(e) => { e.stopPropagation(); removeSticker(s.id); }}
+                            className="text-gray-400 hover:text-red-500 flex-shrink-0"
+                            title="Hapus stiker"
+                          >
+                            <X size={12} />
+                          </button>
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -1008,7 +1189,10 @@ export default function PhotostripEditor() {
           </div>
         )}
 
-        <div className="relative flex items-center justify-center py-2 overflow-auto max-h-[78vh]">
+        <div
+          className="relative flex items-center justify-center py-2 overflow-auto max-h-[78vh]"
+          ref={previewContainerRef}
+        >
           {loading && (
             <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/40 backdrop-blur-xs rounded-2xl z-10 gap-2">
               <Loader2 className="animate-spin text-white" size={36} />
@@ -1020,6 +1204,95 @@ export default function PhotostripEditor() {
             className="max-w-full rounded-2xl shadow-2xl transition-all"
             style={{ maxHeight: "72vh", width: "auto" }}
           />
+
+          {/* ── Sticker Drag Overlay — absolute over the canvas ── */}
+          {stickers.length > 0 && (
+            <div
+              className="absolute inset-0 rounded-2xl"
+              style={{ pointerEvents: "none" }}
+              onPointerMove={handleStickerPointerMove}
+              onPointerUp={handleStickerPointerUp}
+              onPointerLeave={handleStickerPointerUp}
+            >
+              {stickers.map((s) => {
+                const isSelected = selectedStickerId === s.id;
+                return (
+                  <div
+                    key={s.id}
+                    style={{
+                      position: "absolute",
+                      left: `${s.x}%`,
+                      top: `${s.y}%`,
+                      transform: `translate(-50%, -50%) rotate(${s.rotation ?? 0}deg)`,
+                      fontSize: `${Math.round((s.size ?? 48) * 0.55)}px`,
+                      lineHeight: 1,
+                      cursor: "grab",
+                      userSelect: "none",
+                      pointerEvents: "auto",
+                      zIndex: isSelected ? 20 : 10,
+                      filter: isSelected ? "drop-shadow(0 0 6px rgba(244,63,94,0.8))" : undefined,
+                      transition: dragStateRef.current?.id === s.id ? "none" : "filter 0.15s",
+                    }}
+                    onPointerDown={(e) => handleStickerPointerDown(e, s.id)}
+                    title={`Drag untuk pindah • Klik untuk pilih`}
+                  >
+                    {s.imageUrl ? (
+                      <img
+                        src={s.imageUrl}
+                        style={{
+                          width: `${Math.round((s.size ?? 48) * 0.55)}px`,
+                          height: `${Math.round((s.size ?? 48) * 0.55)}px`,
+                          objectFit: "contain",
+                          pointerEvents: "none",
+                        }}
+                        alt=""
+                        draggable={false}
+                      />
+                    ) : (
+                      <span style={{ pointerEvents: "none" }}>{s.emoji}</span>
+                    )}
+
+                    {/* Quick delete button */}
+                    {isSelected && (
+                      <button
+                        style={{
+                          position: "absolute",
+                          top: "-8px",
+                          right: "-8px",
+                          width: "18px",
+                          height: "18px",
+                          borderRadius: "50%",
+                          background: "#e11d48",
+                          color: "white",
+                          border: "none",
+                          cursor: "pointer",
+                          fontSize: "10px",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          pointerEvents: "auto",
+                        }}
+                        onPointerDown={(e) => e.stopPropagation()}
+                        onClick={(e) => { e.stopPropagation(); removeSticker(s.id); setSelectedStickerId(null); }}
+                        title="Hapus stiker"
+                      >
+                        ×
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Click outside overlay to deselect sticker */}
+          {selectedStickerId && (
+            <div
+              className="absolute inset-0 z-5"
+              style={{ pointerEvents: "auto" }}
+              onClick={() => setSelectedStickerId(null)}
+            />
+          )}
         </div>
 
         <button

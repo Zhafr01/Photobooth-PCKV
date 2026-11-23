@@ -13,6 +13,8 @@ export interface Sticker {
   x: number;
   y: number;
   size: number;
+  imageUrl?: string; // base64 data URL for custom uploaded stickers
+  rotation?: number; // degrees
 }
 
 export interface FilterParam {

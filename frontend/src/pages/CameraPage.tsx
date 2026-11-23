@@ -342,6 +342,9 @@ export default function CameraPage() {
   const [cameraError, setCameraError] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showCameraDropdown, setShowCameraDropdown] = useState(false);
+  // Retake: null = normal capture; number = replace photo at that index
+  const [retakeIndex, setRetakeIndex] = useState<number | null>(null);
+  const retakeIndexRef = useRef<number | null>(null);
 
   // Face tracker
   const [faceBoxes, setFaceBoxes] = useState<FaceBox[]>([]);
@@ -358,6 +361,7 @@ export default function CameraPage() {
   useEffect(() => { isMirroredRef.current = isMirrored; }, [isMirrored]);
   useEffect(() => { liveFilterRef.current = liveFilter; }, [liveFilter]);
   useEffect(() => { blurStrengthRef.current = blurStrength; }, [blurStrength]);
+  useEffect(() => { retakeIndexRef.current = retakeIndex; }, [retakeIndex]);
 
   /* ── Face Tracker Init & RAF Loop ── */
   useEffect(() => {
@@ -923,9 +927,6 @@ export default function CameraPage() {
       ctx.imageSmoothingEnabled = true;
       ctx.imageSmoothingQuality = "high";
 
-      // liveRenderCanvas already has: cover-crop, filter applied, CSS mirror via viewportStyle
-      // We just scale it up. Mirror: liveCanvas is NOT internally mirrored (CSS does it),
-      // so we need to flip horizontally if mirrored.
       ctx.save();
       ctx.translate(outW / 2, outH / 2);
       if (rotation !== 0) ctx.rotate((rotation * Math.PI) / 180);
@@ -936,7 +937,20 @@ export default function CameraPage() {
       const b64 = canvas.toDataURL("image/png", 1.0).split(",")[1];
       setFlash(true);
       setTimeout(() => setFlash(false), 180);
-      setCapturedPhotos((prev) => [...prev, b64]);
+
+      setCapturedPhotos((prev) => {
+        const idx = retakeIndexRef.current;
+        if (idx !== null && idx >= 0 && idx < prev.length) {
+          // Replace single photo at retake index
+          const next = [...prev];
+          next[idx] = b64;
+          return next;
+        }
+        return [...prev, b64];
+      });
+      setRetakeIndex(null);
+      retakeIndexRef.current = null;
+
       dispatch({
         type: "ADD_GALLERY_ITEM",
         payload: {
@@ -974,7 +988,19 @@ export default function CameraPage() {
     const b64 = canvas.toDataURL("image/png", 1.0).split(",")[1];
     setFlash(true);
     setTimeout(() => setFlash(false), 180);
-    setCapturedPhotos((prev) => [...prev, b64]);
+
+    setCapturedPhotos((prev) => {
+      const idx = retakeIndexRef.current;
+      if (idx !== null && idx >= 0 && idx < prev.length) {
+        const next = [...prev];
+        next[idx] = b64;
+        return next;
+      }
+      return [...prev, b64];
+    });
+    setRetakeIndex(null);
+    retakeIndexRef.current = null;
+
     dispatch({
       type: "ADD_GALLERY_ITEM",
       payload: {
@@ -1020,8 +1046,11 @@ export default function CameraPage() {
 
   /* ── 7. Shutter Logic ── */
   const handleShutter = useCallback(() => {
-    if (countdown !== null || capturedPhotos.length >= targetCount) return;
-    if (capturedPhotos.length === 0) startRecordingVideo();
+    // In retake mode: allow clicking shutter even if full, to replace the selected photo
+    const isRetakeMode = retakeIndexRef.current !== null;
+    if (countdown !== null) return;
+    if (!isRetakeMode && capturedPhotos.length >= targetCount) return;
+    if (capturedPhotos.length === 0 && !isRetakeMode) startRecordingVideo();
 
     if (mode === "quick") {
       let currentShot = 0;
@@ -1123,7 +1152,20 @@ export default function CameraPage() {
 
   const handleRetake = () => {
     setCapturedPhotos([]);
+    setRetakeIndex(null);
+    retakeIndexRef.current = null;
     dispatch({ type: "SET_SESSION_VIDEO", payload: null });
+  };
+
+  const handleRetakePhoto = (index: number) => {
+    // Enter retake mode: next shutter replaces photo[index] instead of pushing
+    setRetakeIndex(index);
+    retakeIndexRef.current = index;
+  };
+
+  const handleCancelRetake = () => {
+    setRetakeIndex(null);
+    retakeIndexRef.current = null;
   };
 
   // Primary: go directly to Photostrip Editor (Frames, Stickers, Mix Fonts)
@@ -1797,9 +1839,9 @@ export default function CameraPage() {
       <div className="absolute bottom-6 left-0 right-0 z-20 flex justify-center">
         <button
           onClick={handleShutter}
-          disabled={countdown !== null || (mode !== "quick" && capturedPhotos.length >= targetCount)}
+          disabled={countdown !== null || (mode !== "quick" && capturedPhotos.length >= targetCount && retakeIndex === null)}
           className="w-20 h-20 rounded-full bg-rose-600 shadow-xl flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed hover:bg-rose-700 active:scale-95 transition-all border-4 border-white/30"
-          title="Ambil Foto"
+          title={retakeIndex !== null ? `Ambil ulang foto #${retakeIndex + 1}` : "Ambil Foto"}
         >
           {mode === "quick" ? <Zap size={34} className="text-white" /> : <Camera size={34} className="text-white" />}
         </button>
@@ -1815,15 +1857,65 @@ export default function CameraPage() {
             transition={{ type: "spring", stiffness: 320, damping: 32 }}
             className="absolute bottom-0 left-0 right-0 z-25 bg-black/90 border-t border-white/10 py-3 px-4"
           >
+            {/* Retake mode banner */}
+            <AnimatePresence>
+              {retakeIndex !== null && (
+                <motion.div
+                  initial={{ opacity: 0, y: -8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -8 }}
+                  className="flex items-center justify-between gap-2 mb-2 px-3 py-1.5 bg-amber-500/20 border border-amber-400/40 rounded-xl"
+                >
+                  <span className="text-amber-300 text-xs font-semibold flex items-center gap-1.5">
+                    <RotateCcw size={12} className="animate-spin" />
+                    Mode Ulang: Foto #{retakeIndex + 1} — Tekan tombol kamera untuk ambil ulang
+                  </span>
+                  <button
+                    onClick={handleCancelRetake}
+                    className="text-amber-400 hover:text-white text-xs font-bold flex items-center gap-1"
+                  >
+                    <X size={12} /> Batal
+                  </button>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
             <div className="flex items-center justify-between gap-3 max-w-2xl mx-auto">
+              {/* Thumbnail list — click to retake that specific photo */}
               <div className="flex gap-2 overflow-x-auto pb-1">
                 {capturedPhotos.map((photo, i) => (
-                  <img
-                    key={i}
-                    src={`data:image/png;base64,${photo}`}
-                    alt={`Foto ${i + 1}`}
-                    className="h-14 w-14 object-cover rounded-lg border-2 border-rose-600 flex-shrink-0"
-                  />
+                  <div key={i} className="relative flex-shrink-0 group">
+                    <img
+                      src={`data:image/png;base64,${photo}`}
+                      alt={`Foto ${i + 1}`}
+                      className={`h-14 w-14 object-cover rounded-lg border-2 transition-all cursor-pointer ${
+                        retakeIndex === i
+                          ? "border-amber-400 ring-2 ring-amber-400/60 scale-105"
+                          : "border-rose-600 hover:border-amber-400 hover:scale-105"
+                      }`}
+                      onClick={() =>
+                        retakeIndex === i ? handleCancelRetake() : handleRetakePhoto(i)
+                      }
+                      title={retakeIndex === i ? "Klik untuk batalkan" : `Klik untuk ulang foto #${i + 1}`}
+                    />
+                    {/* Hover overlay with retake icon */}
+                    <div
+                      className={`absolute inset-0 rounded-lg flex items-center justify-center transition-opacity ${
+                        retakeIndex === i
+                          ? "bg-amber-400/30 opacity-100"
+                          : "bg-black/50 opacity-0 group-hover:opacity-100"
+                      }`}
+                      onClick={() =>
+                        retakeIndex === i ? handleCancelRetake() : handleRetakePhoto(i)
+                      }
+                    >
+                      <RotateCcw size={16} className={retakeIndex === i ? "text-amber-300" : "text-white"} />
+                    </div>
+                    {/* Number badge */}
+                    <span className="absolute -top-1 -left-1 w-4 h-4 bg-rose-600 rounded-full text-white text-[9px] font-bold flex items-center justify-center">
+                      {i + 1}
+                    </span>
+                  </div>
                 ))}
                 {Array.from({ length: Math.max(0, targetCount - capturedPhotos.length) }).map((_, i) => (
                   <div key={`empty-${i}`} className="h-14 w-14 rounded-lg border-2 border-dashed border-white/20 flex-shrink-0 flex items-center justify-center">
@@ -1831,11 +1923,17 @@ export default function CameraPage() {
                   </div>
                 ))}
               </div>
+
+              {/* Action buttons */}
               <div className="flex gap-2 flex-shrink-0">
-                <button onClick={handleRetake} className="flex items-center gap-1.5 px-3 py-2 bg-white/10 rounded-xl text-xs font-medium text-white hover:bg-white/20 transition-colors">
-                  <RotateCcw size={14} /> Ulang
+                <button
+                  onClick={handleRetake}
+                  className="flex items-center gap-1.5 px-3 py-2 bg-white/10 rounded-xl text-xs font-medium text-white hover:bg-white/20 transition-colors"
+                  title="Ulang semua foto dari awal"
+                >
+                  <RotateCcw size={14} /> Semua
                 </button>
-                {capturedPhotos.length >= targetCount && (
+                {capturedPhotos.length >= targetCount && retakeIndex === null && (
                   <>
                     <button
                       onClick={handleProceedStudio}
@@ -1848,7 +1946,7 @@ export default function CameraPage() {
                       onClick={handleProceed}
                       className="flex items-center gap-1.5 px-4 py-2 bg-rose-600 rounded-xl text-xs font-bold text-white hover:bg-rose-700 transition-colors shadow-sm"
                     >
-                      Pilih Bingkai & Stiker <ArrowRight size={14} />
+                      Bingkai & Stiker <ArrowRight size={14} />
                     </button>
                   </>
                 )}
