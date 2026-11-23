@@ -248,10 +248,11 @@ export default function PhotostripEditor() {
       canvasWidth = 1200;
       canvasHeight = 1800;
       count = 4;
-    } else if (layout === "grid2x2landscape") {
-      // Landscape 2×2 grid — ideal for sharing on mobile (story / wallpaper format)
-      canvasWidth = 1800;
-      canvasHeight = 1200;
+    } else if (layout === "grid2x2portrait") {
+      // Portrait 2×2 grid — 2 columns × 2 rows, each slot is portrait (3:4 ratio)
+      // Canvas: 1200×2000 → each slot ~560×860 (portrait, taller than wide)
+      canvasWidth = 1200;
+      canvasHeight = 2000;
       count = 4;
     } else if (layout === "singleCard") {
       canvasWidth = 1200;
@@ -446,8 +447,8 @@ export default function PhotostripEditor() {
       photoW = Math.floor((canvas.width - pad * 2 - colGap) / 2);
       const availH = canvas.height - topH - bottomH - colGap;
       photoH = Math.floor(availH / 2);
-    } else if (layout === "grid2x2landscape") {
-      // Landscape: 2 columns side by side, 2 rows — wider than tall
+    } else if (layout === "grid2x2portrait") {
+      // Portrait 2×2: 2 columns, each slot portrait (tall)
       const colGap = Math.round(scaledGap * 1.2);
       photoW = Math.floor((canvas.width - pad * 2 - colGap) / 2);
       const availH = canvas.height - topH - bottomH - colGap;
@@ -465,7 +466,7 @@ export default function PhotostripEditor() {
       let x = pad;
       let y = topH + i * (photoH + scaledGap);
 
-      if (layout === "grid2x2" || layout === "grid2x2landscape") {
+      if (layout === "grid2x2" || layout === "grid2x2portrait") {
         const colGap = Math.round(scaledGap * 1.2);
         const col = i % 2;
         const row = Math.floor(i / 2);
@@ -719,22 +720,23 @@ export default function PhotostripEditor() {
                 </label>
                 <div className="grid grid-cols-2 gap-1.5">
                   {[
-                    { key: "strip4", label: "Strip 4 Foto", icon: "⬛⬛⬛⬛" },
-                    { key: "strip3", label: "Strip 3 Foto", icon: "⬛⬛⬛" },
-                    { key: "grid2x2", label: "Grid 2×2 Potret", icon: "▪▪\n▪▪" },
-                    { key: "grid2x2landscape", label: "Grid 2×2 Landscape", icon: "🔲" },
-                    { key: "singleCard", label: "Kartu 1 Foto", icon: "🖼️" },
+                    { key: "strip4", label: "Strip 4 Foto", sub: "4 foto vertikal" },
+                    { key: "strip3", label: "Strip 3 Foto", sub: "3 foto vertikal" },
+                    { key: "grid2x2", label: "Grid 2×2", sub: "2×2 kotak" },
+                    { key: "grid2x2portrait", label: "Grid 2×2 Potret", sub: "2×2 portrait" },
+                    { key: "singleCard", label: "Kartu 1 Foto", sub: "1 foto besar" },
                   ].map((t) => (
                     <button
                       key={t.key}
                       onClick={() => dispatch({ type: "SET_LAYOUT", payload: t.key as PhotostripLayout })}
-                      className={`px-3 py-2 rounded-xl text-xs font-semibold border text-center transition-all ${
+                      className={`px-3 py-2 rounded-xl text-xs font-semibold border text-center transition-all leading-tight ${
                         layout === t.key
                           ? "border-rose-600 bg-rose-50 text-rose-700 shadow-xs"
                           : "border-gray-200 text-gray-700 hover:border-gray-300 bg-white"
                       }`}
                     >
-                      {t.label}
+                      <div>{t.label}</div>
+                      <div className={`text-[10px] font-normal mt-0.5 ${layout === t.key ? "text-rose-400" : "text-gray-400"}`}>{t.sub}</div>
                     </button>
                   ))}
                 </div>
